@@ -15,6 +15,43 @@
   <img alt="API" src="https://img.shields.io/badge/api-REST-14b8a6?style=for-the-badge" />
 </p>
 
+## Architecture
+
+```text
+┌─────────────────────────── Linux VM ─────────────────────────────────┐
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │  Nginx (host-based — recommended)                               │  │
+│  │   • Basic auth (htpasswd, chmod 640 root:www-data)              │  │
+│  │   • Reverse proxy to Chrome containers (WebSocket)              │  │
+│  │   • /api/* proxy to Node.js API (:8787, localhost only)         │  │
+│  │   • Optional HTTPS via Let's Encrypt / certbot                  │  │
+│  └──────────┬──────────────────────────────────┬───────────────────┘  │
+│             │                                  │                       │
+│    ┌────────┴───────┐  ┌────────────┐  ┌──────┴─────────────────┐    │
+│    │ seller1-chrome │  │ seller2..  │  │ fleet-api (Docker)      │    │
+│    │ Docker :3000   │  │ Docker :.. │  │ :8787 (127.0.0.1 only)  │    │
+│    │ profile ───────┤  │ profile ───┤  │ Mounts:                 │    │
+│    │ (bind-mount)   │  │ (bind-mount│  │  /var/run/docker.sock   │    │
+│    │ proxy.env      │  │ proxy.env  │  │  /opt  (seller dirs)    │    │
+│    └────────────────┘  └────────────┘  │  /fleet (repo scripts)  │    │
+│                                         └────────────────────────┘    │
+│                                                                        │
+│  /opt/<seller>-browser/                                               │
+│    profile/    ← session data (cookies, logins, tabs, extensions)     │
+│    proxy.env   ← proxy credentials (chmod 600, never in YAML)        │
+│    proxy/      ← proxies.conf, active.conf                           │
+│    backups/    ← daily profile tar.gz (keeps last 3)                  │
+│    *.sh        ← start, stop, restart, recreate, update, status       │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+**Key design points:**
+- **Nginx runs on the host** — required for certbot SSL and WebSocket compatibility.
+- **API runs in Docker** (recommended) via `docker-compose.fleet.yml`, or via systemd.
+- **Proxy is optional** — no-proxy, single-proxy, and multi-proxy modes all work.
+- **Session persistence** — `./profile` bind-mount keeps Chrome logged in across VM stop/start.
+
 ## Why This Is Useful
 - Run full Chromium browser workspaces in the cloud with persistent login sessions.
 - Open from anywhere through your domain with optional HTTPS and basic auth.
@@ -123,6 +160,15 @@ sudo bash api/install-service.sh --docker
 ```
 
 Logs: `docker compose -f docker-compose.fleet.yml logs -f api`
+
+### After provisioning, lock down install/remove
+
+Once all browser instances are set up, set in `api/.env`:
+```env
+ALLOW_INSTALL=false
+ALLOW_UNINSTALL=false
+```
+This blocks `POST /api/v1/sellers` and `DELETE /api/v1/sellers/:seller` to prevent accidental or unauthorized changes. Lifecycle actions (start/stop/restart) continue working normally.
 
 ## Security Warning — Docker Socket
 

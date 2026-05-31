@@ -59,6 +59,40 @@ npm run dev
 
 Default: `http://127.0.0.1:8787` (bind address from HOST env, default 127.0.0.1)
 
+## Production .env Recommendations
+
+Copy `.env.example` to `.env` and set at minimum:
+
+| Variable | Required | Recommendation |
+|---|---|---|
+| `AUTH_USERNAME` | Yes | Any non-default username |
+| `AUTH_PASSWORD` | Yes | 16+ chars, mixed case/numbers/symbols |
+| `JWT_SECRET` | Yes | `openssl rand -base64 48` (unique per deploy) |
+| `REFRESH_TOKEN_SECRET` | Yes | `openssl rand -base64 48` (different from JWT_SECRET) |
+| `CORS_ORIGINS` | Yes | Your frontend domain(s), not localhost |
+| `HOST` | Yes | Keep `127.0.0.1` — never `0.0.0.0` in production |
+| `ALLOW_INSTALL` | Yes | Set `false` once sellers are provisioned |
+| `ALLOW_UNINSTALL` | Yes | Set `false` once sellers are provisioned |
+| `SESSIONS_FILE` | No | Default `/opt/chromium-fleet-sessions.json` |
+| `WEBHOOK_URL` | No | Discord/Slack webhook for crash alerts |
+
+Rate limiting (all configurable via `.env`):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `RATE_LIMIT_AUTH_WINDOW_MS` | `900000` (15 min) | Auth endpoint window |
+| `RATE_LIMIT_AUTH_MAX` | `20` | Max auth requests per window per IP |
+| `RATE_LIMIT_API_WINDOW_MS` | `60000` (1 min) | Global API window |
+| `RATE_LIMIT_API_MAX` | `200` | Max API requests per window per IP |
+
+SSE stream protection:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SSE_MAX_CONNECTIONS_PER_IP` | `3` | Max concurrent SSE streams per IP |
+| `SSE_MAX_EVENT_BYTES` | `2097152` (2MB) | Max single event payload |
+| `SSE_MAX_BYTES_PER_HOUR` | `104857600` (100MB) | Per-connection hourly quota |
+
 ## Auth Flow (Recommended)
 1. Login with username/password:
 ```http
@@ -179,6 +213,47 @@ Daily backups are created automatically (cron at 02:00 UTC). Restore replaces th
 ### Seller Logs
 - `GET /api/v1/sellers/:seller/logs?lines=100` — last N Docker container logs (max 1000)
 
+## Frontend Dashboard Endpoint Map
+
+Use these endpoints to build a frontend dashboard:
+
+| Dashboard feature | Method | Endpoint |
+|---|---|---|
+| Login | `POST` | `/api/v1/auth/login` |
+| Refresh session | `POST` | `/api/v1/auth/refresh` |
+| Logout | `POST` | `/api/v1/auth/logout` |
+| Server capabilities | `GET` | `/api/v1/meta` |
+| **Monitoring** | | |
+| VM health card (CPU/RAM/disk/swap) | `GET` | `/api/v1/monitor/vm` |
+| Fleet + VM overview (cached) | `GET` | `/api/v1/monitor/overview` |
+| Live dashboard stream (SSE) | `GET` | `/api/v1/monitor/stream?intervalMs=15000` |
+| **Browser Instances** | | |
+| List all browsers + Docker state | `GET` | `/api/v1/sellers` |
+| Single browser detail | `GET` | `/api/v1/sellers/:seller` |
+| Start browser | `POST` | `/api/v1/sellers/:seller/actions/start` |
+| Stop browser | `POST` | `/api/v1/sellers/:seller/actions/stop` |
+| Restart browser | `POST` | `/api/v1/sellers/:seller/actions/restart` |
+| Full recreate (safe) | `POST` | `/api/v1/sellers/:seller/actions/recreate` |
+| Update image + recreate | `POST` | `/api/v1/sellers/:seller/actions/update` |
+| Container status | `POST` | `/api/v1/sellers/:seller/actions/status` |
+| Resume if stopped | `POST` | `/api/v1/sellers/:seller/resume` |
+| Resume all stopped | `POST` | `/api/v1/sellers/resume-all` |
+| Fleet bulk action | `POST` | `/api/v1/sellers/actions/:action` |
+| Container logs | `GET` | `/api/v1/sellers/:seller/logs?lines=100` |
+| Health event log | `GET` | `/api/v1/sellers/:seller/events` |
+| **Proxy Management** | | |
+| List proxy pool (passwords masked) | `GET` | `/api/v1/sellers/:seller/proxies` |
+| Live proxy health test | `GET` | `/api/v1/sellers/:seller/proxies/test` |
+| Add proxy to pool | `POST` | `/api/v1/sellers/:seller/proxies` |
+| Remove proxy by index | `DELETE` | `/api/v1/sellers/:seller/proxies/:index` |
+| Rotate to next alive proxy | `POST` | `/api/v1/sellers/:seller/actions/proxy-rotate` |
+| Proxy pool status (via script) | `POST` | `/api/v1/sellers/:seller/actions/proxy-status` |
+| **Extensions and Backups** | | |
+| List installed extensions | `GET` | `/api/v1/sellers/:seller/extensions` |
+| Remove extension | `DELETE` | `/api/v1/sellers/:seller/extensions/:name` |
+| List profile backups | `GET` | `/api/v1/sellers/:seller/backups` |
+| Restore from backup | `POST` | `/api/v1/sellers/:seller/restore/:filename` |
+
 ## Live Status Stream (SSE)
 Use this for continuous frontend dashboard updates:
 
@@ -269,6 +344,21 @@ Mounting `/var/run/docker.sock` grants the API container host-level Docker daemo
 - Rate limiting is on by default — tune `RATE_LIMIT_API_MAX` and `RATE_LIMIT_AUTH_MAX`.
 - SSE streams are quota-limited per connection — tune `SSE_MAX_BYTES_PER_HOUR`.
 - In Docker mode (`FLEET_ROOT` is set), `POST /api/v1/sellers` and `DELETE /api/v1/sellers/:seller` return `501` — run `install.sh` / `uninstall.sh` on the host VM instead.
+
+## Docker API Mode Restrictions
+
+When the API runs in Docker (`FLEET_ROOT=/fleet` is set via `docker-compose.fleet.yml`):
+
+| Endpoint | Behavior |
+|---|---|
+| `POST /api/v1/sellers` | Returns `501` — run `install.sh` on host directly |
+| `DELETE /api/v1/sellers/:seller` | Returns `501` — run `uninstall.sh` on host directly |
+| All lifecycle actions | ✓ Work normally (docker.sock) |
+| All monitoring endpoints | ✓ Work normally |
+| All proxy endpoints | ✓ Work normally |
+| All SSE streams | ✓ Work normally |
+
+Additionally, if `ALLOW_INSTALL=false` or `ALLOW_UNINSTALL=false` is set in `.env`, the corresponding endpoint returns `403 Forbidden` regardless of Docker mode.
 
 ## Notes
 

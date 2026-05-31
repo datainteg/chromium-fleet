@@ -1,13 +1,42 @@
+# Node.js
 api/node_modules/
-api/.env
+node_modules/
 
-# Runtime credentials and generated files
+# Environment and secrets — never commit
+api/.env
 proxy.env
 *.env
 !.env.example
+chromium-fleet-sessions.json
+
+# Browser profile data — never commit (contains login sessions, cookies)
+profile/
+*/profile/
+
+# Generated runtime directories
 backups/
+*/backups/
+logs/
+*/logs/
+
+# Archive files
 *.tar.gz
-*.log
+*.tar
+*.zip
+
+# SSL/TLS certificates (managed by certbot on host)
+*.pem
+*.key
+*.crt
+*.csr
+
+# Editor and OS files
 .vscode/
+.idea/
 .DS_Store
-node_modules/
+Thumbs.db
+
+# Temp files
+*.tmp
+*.bak
+*.swp
