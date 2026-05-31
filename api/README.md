@@ -6,6 +6,8 @@
 
 REST control plane for `chromium-fleet`, built for frontend integration and operations dashboards.
 
+**Full API reference with examples:** [`API_REFERENCE.md`](./API_REFERENCE.md)
+
 <p>
   <img alt="Runtime" src="https://img.shields.io/badge/runtime-Node%2018%2B-16a34a?style=flat-square" />
   <img alt="Auth" src="https://img.shields.io/badge/auth-JWT%20%2B%20Refresh-0284c7?style=flat-square" />
