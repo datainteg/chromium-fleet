@@ -21,6 +21,7 @@ const {
 } = require("./monitoringService");
 
 const app = express();
+const refreshSessions = new Map();
 
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: "1mb" }));
@@ -67,11 +68,26 @@ function readBearerToken(req) {
   return "";
 }
 
+function readRefreshToken(req) {
+  const bodyValue = typeof req.body?.refreshToken === "string" ? req.body.refreshToken.trim() : "";
+  if (bodyValue) {
+    return bodyValue;
+  }
+
+  const headerValue = req.headers["x-refresh-token"];
+  if (typeof headerValue === "string" && headerValue.trim() !== "") {
+    return headerValue.trim();
+  }
+
+  return "";
+}
+
 function getAuthMode() {
   const jwtConfigured =
     Boolean(config.authUsername) &&
     Boolean(config.authPassword) &&
-    Boolean(config.jwtSecret);
+    Boolean(config.jwtSecret) &&
+    Boolean(config.refreshTokenSecret);
   const apiKeyConfigured = Boolean(config.apiKey) && config.allowApiKeyAuth;
   return {
     jwtConfigured,
@@ -81,7 +97,7 @@ function getAuthMode() {
 
 function buildAccessToken(subject) {
   return jwt.sign(
-    { sub: subject, role: "api-client" },
+    { sub: subject, role: "api-client", tokenType: "access" },
     config.jwtSecret,
     {
       expiresIn: config.jwtExpiresIn,
@@ -89,6 +105,104 @@ function buildAccessToken(subject) {
       audience: config.jwtAudience
     }
   );
+}
+
+function buildRefreshToken(subject, tokenId) {
+  return jwt.sign(
+    { sub: subject, tokenType: "refresh", jti: tokenId },
+    config.refreshTokenSecret,
+    {
+      expiresIn: config.refreshTokenExpiresIn,
+      issuer: config.jwtIssuer,
+      audience: config.jwtAudience
+    }
+  );
+}
+
+function readIssuedAtAndExpiry(jwtToken) {
+  const decoded = jwt.decode(jwtToken);
+  if (!decoded || typeof decoded !== "object") {
+    return { issuedAt: null, expiresAt: null, expiresInSeconds: null };
+  }
+
+  const issuedAt = Number.isFinite(decoded.iat) ? decoded.iat : null;
+  const expiresAt = Number.isFinite(decoded.exp) ? decoded.exp : null;
+  const expiresInSeconds =
+    issuedAt !== null && expiresAt !== null ? Math.max(0, expiresAt - issuedAt) : null;
+  return { issuedAt, expiresAt, expiresInSeconds };
+}
+
+function cleanupRefreshSessions() {
+  const now = Math.floor(Date.now() / 1000);
+  for (const [tokenId, session] of refreshSessions.entries()) {
+    if (!session || !Number.isFinite(session.expiresAt) || session.expiresAt <= now) {
+      refreshSessions.delete(tokenId);
+    }
+  }
+}
+
+function revokeRefreshToken(tokenId, reason = "revoked") {
+  const session = refreshSessions.get(tokenId);
+  if (!session) {
+    return false;
+  }
+  session.revoked = true;
+  session.revokedAt = Math.floor(Date.now() / 1000);
+  session.reason = reason;
+  refreshSessions.set(tokenId, session);
+  return true;
+}
+
+function revokeAllRefreshTokensForSubject(subject, reason = "replaced") {
+  for (const [tokenId, session] of refreshSessions.entries()) {
+    if (session?.subject === subject && !session.revoked) {
+      revokeRefreshToken(tokenId, reason);
+    }
+  }
+}
+
+function rememberRevokedToken(tokenId, subject, issuedAt, expiresAt, reason) {
+  if (!Number.isFinite(expiresAt)) {
+    return;
+  }
+  refreshSessions.set(tokenId, {
+    tokenId,
+    subject,
+    issuedAt: Number.isFinite(issuedAt) ? issuedAt : null,
+    expiresAt,
+    revoked: true,
+    revokedAt: Math.floor(Date.now() / 1000),
+    reason
+  });
+}
+
+function issueTokenPair(subject) {
+  cleanupRefreshSessions();
+
+  const accessToken = buildAccessToken(subject);
+  const refreshTokenId = crypto.randomUUID();
+  const refreshToken = buildRefreshToken(subject, refreshTokenId);
+
+  const accessTiming = readIssuedAtAndExpiry(accessToken);
+  const refreshTiming = readIssuedAtAndExpiry(refreshToken);
+
+  if (refreshTiming.expiresAt !== null) {
+    refreshSessions.set(refreshTokenId, {
+      tokenId: refreshTokenId,
+      subject,
+      issuedAt: refreshTiming.issuedAt,
+      expiresAt: refreshTiming.expiresAt,
+      revoked: false
+    });
+  }
+
+  return {
+    tokenType: "Bearer",
+    accessToken,
+    refreshToken,
+    accessExpiresInSeconds: accessTiming.expiresInSeconds,
+    refreshExpiresInSeconds: refreshTiming.expiresInSeconds
+  };
 }
 
 function authMiddleware(req, res, next) {
@@ -112,6 +226,10 @@ function authMiddleware(req, res, next) {
         issuer: config.jwtIssuer,
         audience: config.jwtAudience
       });
+      if (!claims || claims.tokenType !== "access") {
+        res.status(401).json({ error: "Invalid token type" });
+        return;
+      }
       req.auth = {
         method: "jwt",
         subject: claims.sub || null
@@ -184,18 +302,110 @@ app.post("/api/v1/auth/login", (req, res) => {
     return;
   }
 
-  const accessToken = buildAccessToken(config.authUsername);
-  const decoded = jwt.decode(accessToken);
-  const expiresInSeconds =
-    decoded && typeof decoded === "object" && decoded.exp && decoded.iat
-      ? Math.max(0, decoded.exp - decoded.iat)
-      : null;
+  revokeAllRefreshTokensForSubject(config.authUsername, "new-login");
+  const tokens = issueTokenPair(config.authUsername);
+  res.json(tokens);
+});
 
-  res.json({
-    tokenType: "Bearer",
-    accessToken,
-    expiresInSeconds
-  });
+app.post("/api/v1/auth/refresh", (req, res) => {
+  if (config.disableAuth) {
+    res.status(400).json({ error: "Auth is disabled on this server" });
+    return;
+  }
+
+  const authMode = getAuthMode();
+  if (!authMode.jwtConfigured) {
+    res.status(500).json({
+      error: "JWT auth is not configured on this server"
+    });
+    return;
+  }
+
+  const refreshToken = readRefreshToken(req);
+  if (!refreshToken) {
+    res.status(400).json({ error: "refreshToken is required" });
+    return;
+  }
+
+  let claims;
+  try {
+    claims = jwt.verify(refreshToken, config.refreshTokenSecret, {
+      issuer: config.jwtIssuer,
+      audience: config.jwtAudience
+    });
+  } catch (error) {
+    res.status(401).json({ error: "Invalid or expired refresh token" });
+    return;
+  }
+
+  if (!claims || claims.tokenType !== "refresh" || typeof claims.jti !== "string" || typeof claims.sub !== "string") {
+    res.status(401).json({ error: "Invalid refresh token" });
+    return;
+  }
+
+  cleanupRefreshSessions();
+  const session = refreshSessions.get(claims.jti);
+  if (session && session.subject !== claims.sub) {
+    res.status(401).json({ error: "Invalid refresh token subject" });
+    return;
+  }
+  if (session && session.revoked) {
+    res.status(401).json({ error: "Refresh token is revoked" });
+    return;
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  if (session && Number.isFinite(session.expiresAt) && session.expiresAt <= now) {
+    refreshSessions.delete(claims.jti);
+    res.status(401).json({ error: "Refresh token is expired" });
+    return;
+  }
+
+  if (session) {
+    revokeRefreshToken(claims.jti, "rotated");
+  } else {
+    rememberRevokedToken(claims.jti, claims.sub, claims.iat, claims.exp, "rotated");
+  }
+  const tokens = issueTokenPair(claims.sub);
+  res.json(tokens);
+});
+
+app.post("/api/v1/auth/logout", (req, res) => {
+  if (config.disableAuth) {
+    res.status(400).json({ error: "Auth is disabled on this server" });
+    return;
+  }
+
+  const authMode = getAuthMode();
+  if (!authMode.jwtConfigured) {
+    res.status(500).json({
+      error: "JWT auth is not configured on this server"
+    });
+    return;
+  }
+
+  const refreshToken = readRefreshToken(req);
+  if (!refreshToken) {
+    res.status(400).json({ error: "refreshToken is required" });
+    return;
+  }
+
+  try {
+    const claims = jwt.verify(refreshToken, config.refreshTokenSecret, {
+      issuer: config.jwtIssuer,
+      audience: config.jwtAudience
+    });
+    if (claims && claims.tokenType === "refresh" && typeof claims.jti === "string") {
+      if (!revokeRefreshToken(claims.jti, "logout")) {
+        rememberRevokedToken(claims.jti, claims.sub, claims.iat, claims.exp, "logout");
+      }
+    }
+  } catch {
+    // Keep logout idempotent.
+  }
+
+  cleanupRefreshSessions();
+  res.json({ loggedOut: true });
 });
 
 app.use("/api", authMiddleware);
@@ -204,11 +414,12 @@ app.get("/api/v1/meta", (req, res) => {
   const authMode = getAuthMode();
   res.json({
     service: "chromium-fleet-api",
-    version: "0.2.0",
+    version: "0.3.0",
     authEnabled: !config.disableAuth,
     authMode: {
       jwtEnabled: authMode.jwtConfigured,
-      apiKeyEnabled: authMode.apiKeyConfigured
+      apiKeyEnabled: authMode.apiKeyConfigured,
+      refreshTokenRotation: authMode.jwtConfigured
     },
     allowInstall: config.allowInstall,
     allowUninstall: config.allowUninstall,

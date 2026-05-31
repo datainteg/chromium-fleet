@@ -45,6 +45,7 @@ function parseString(value, fallback = "") {
 const authUsername = parseString(process.env.AUTH_USERNAME, "");
 const authPassword = parseString(process.env.AUTH_PASSWORD, "");
 const jwtSecret = parseString(process.env.JWT_SECRET, "");
+const refreshTokenSecret = parseString(process.env.REFRESH_TOKEN_SECRET, jwtSecret);
 
 const config = {
   port: parsePositiveInt(process.env.PORT, 8787),
@@ -53,7 +54,9 @@ const config = {
   authUsername,
   authPassword,
   jwtSecret,
+  refreshTokenSecret,
   jwtExpiresIn: parseString(process.env.JWT_EXPIRES_IN, "12h"),
+  refreshTokenExpiresIn: parseString(process.env.REFRESH_TOKEN_EXPIRES_IN, "7d"),
   jwtIssuer: parseString(process.env.JWT_ISSUER, "chromium-fleet-api"),
   jwtAudience: parseString(process.env.JWT_AUDIENCE, "chromium-fleet-clients"),
   disableAuth: parseBoolean(process.env.DISABLE_AUTH, false),

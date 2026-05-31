@@ -216,6 +216,8 @@ npm start
 Key endpoints:
 
 - `POST /api/v1/auth/login` (username/password -> JWT)
+- `POST /api/v1/auth/refresh` (rotate refresh token -> new JWT pair)
+- `POST /api/v1/auth/logout` (revoke refresh token)
 - `GET /api/v1/monitor/overview`
 - `GET /api/v1/monitor/vm`
 - `GET /api/v1/monitor/fleet`

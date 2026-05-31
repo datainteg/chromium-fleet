@@ -12,7 +12,7 @@ cp .env.example .env
 
 Edit `.env` and set at least:
 
-- `AUTH_USERNAME`, `AUTH_PASSWORD`, `JWT_SECRET`
+- `AUTH_USERNAME`, `AUTH_PASSWORD`, `JWT_SECRET`, `REFRESH_TOKEN_SECRET`
 - `CORS_ORIGINS` to your frontend URL(s)
 
 ## 2) Run
@@ -43,6 +43,24 @@ Default mode is username/password login + JWT bearer token.
 Authorization: Bearer <accessToken>
 ```
 
+3. When access token expires, refresh it:
+
+```json
+POST /api/v1/auth/refresh
+{
+  "refreshToken": "<refreshToken>"
+}
+```
+
+4. Revoke refresh token on logout:
+
+```json
+POST /api/v1/auth/logout
+{
+  "refreshToken": "<refreshToken>"
+}
+```
+
 Optional legacy mode:
 
 - Set `ALLOW_API_KEY_AUTH=true`
@@ -62,7 +80,15 @@ Server capabilities and supported actions.
 
 ### `POST /api/v1/auth/login`
 
-Login with username/password and receive JWT access token.
+Login with username/password and receive access + refresh tokens.
+
+### `POST /api/v1/auth/refresh`
+
+Rotate refresh token and issue a fresh access + refresh token pair.
+
+### `POST /api/v1/auth/logout`
+
+Revoke refresh token (logout).
 
 ### `GET /api/v1/monitor/overview`
 
