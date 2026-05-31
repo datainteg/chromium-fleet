@@ -420,6 +420,124 @@ async function resumeAllSellers() {
   };
 }
 
+async function listProxies(seller) {
+  if (!isValidSellerName(seller)) {
+    throw Object.assign(new Error("Invalid seller name"), { statusCode: 400 });
+  }
+  const sellerPaths = buildSellerPaths(seller);
+  const composeText = await readTextIfExists(sellerPaths.composeFile);
+  if (!composeText) {
+    throw Object.assign(new Error("Seller not found"), { statusCode: 404 });
+  }
+
+  const proxyConfText = (await readTextIfExists(sellerPaths.proxyConfFile)) || "";
+  const activeProxyText = ((await readTextIfExists(sellerPaths.activeProxyFile)) || "").trim();
+
+  const proxies = proxyConfText
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((line, idx) => {
+      const parts = line.split(":");
+      const host = parts[0] || "";
+      const port = parts[1] || "";
+      const user = parts[2] || "";
+      const active = Boolean(activeProxyText && activeProxyText.startsWith(`${host}:${port}:`));
+      return { index: idx, host, port, user, active };
+    });
+
+  return { seller, count: proxies.length, proxies };
+}
+
+async function addProxy(seller, proxyLine) {
+  if (!isValidSellerName(seller)) {
+    throw Object.assign(new Error("Invalid seller name"), { statusCode: 400 });
+  }
+  if (!isValidProxy(proxyLine)) {
+    throw Object.assign(
+      new Error("Invalid proxy format. Expected: host:port:user:pass with a numeric port"),
+      { statusCode: 400 }
+    );
+  }
+
+  const sellerPaths = buildSellerPaths(seller);
+  const composeText = await readTextIfExists(sellerPaths.composeFile);
+  if (!composeText) {
+    throw Object.assign(new Error("Seller not found"), { statusCode: 404 });
+  }
+
+  const current = (await readTextIfExists(sellerPaths.proxyConfFile)) || "";
+  const lines = current
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  const [newHost, newPort] = proxyLine.split(":");
+  if (lines.some((l) => l.startsWith(`${newHost}:${newPort}:`))) {
+    throw Object.assign(new Error("Proxy already exists in pool"), { statusCode: 409 });
+  }
+
+  await fs.mkdir(path.dirname(sellerPaths.proxyConfFile), { recursive: true });
+  const updated = [...lines, proxyLine];
+  await fs.writeFile(sellerPaths.proxyConfFile, updated.join("\n") + "\n", "utf8");
+  await fs.chmod(sellerPaths.proxyConfFile, 0o600);
+
+  return {
+    seller,
+    added: `${newHost}:${newPort}`,
+    count: updated.length
+  };
+}
+
+async function removeProxy(seller, indexParam) {
+  if (!isValidSellerName(seller)) {
+    throw Object.assign(new Error("Invalid seller name"), { statusCode: 400 });
+  }
+
+  const sellerPaths = buildSellerPaths(seller);
+  const composeText = await readTextIfExists(sellerPaths.composeFile);
+  if (!composeText) {
+    throw Object.assign(new Error("Seller not found"), { statusCode: 404 });
+  }
+
+  const current = (await readTextIfExists(sellerPaths.proxyConfFile)) || "";
+  const lines = current
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  const idx = Number.parseInt(String(indexParam), 10);
+  if (!Number.isFinite(idx) || idx < 0 || idx >= lines.length) {
+    const range = lines.length > 0 ? `0–${lines.length - 1}` : "empty";
+    throw Object.assign(
+      new Error(`Proxy index ${indexParam} out of range (${range})`),
+      { statusCode: 400 }
+    );
+  }
+
+  const removed = lines[idx];
+  const [removedHost, removedPort] = removed.split(":");
+  lines.splice(idx, 1);
+
+  await fs.writeFile(
+    sellerPaths.proxyConfFile,
+    lines.length > 0 ? lines.join("\n") + "\n" : "",
+    "utf8"
+  );
+
+  // If the removed proxy was active, clear active.conf so health cron picks a new one
+  const activeProxyText = ((await readTextIfExists(sellerPaths.activeProxyFile)) || "").trim();
+  if (activeProxyText.startsWith(`${removedHost}:${removedPort}:`)) {
+    await fs.writeFile(sellerPaths.activeProxyFile, "", "utf8").catch(() => {});
+  }
+
+  return {
+    seller,
+    removed: `${removedHost}:${removedPort}`,
+    count: lines.length
+  };
+}
+
 module.exports = {
   listSellers,
   getSellerSummary,
@@ -428,5 +546,8 @@ module.exports = {
   runSellerAction,
   resumeSeller,
   resumeAllSellers,
+  listProxies,
+  addProxy,
+  removeProxy,
   SELLER_ACTIONS
 };

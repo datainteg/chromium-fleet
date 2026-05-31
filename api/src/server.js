@@ -15,7 +15,10 @@ const {
   removeSeller,
   resumeAllSellers,
   resumeSeller,
-  runSellerAction
+  runSellerAction,
+  listProxies,
+  addProxy,
+  removeProxy
 } = require("./fleetService");
 const {
   getFleetUsage,
@@ -446,6 +449,7 @@ app.get("/api/v1/meta", (req, res) => {
     allowUninstall: config.allowUninstall,
     allowActions: config.allowActions,
     supportedActions: Object.keys(SELLER_ACTIONS),
+    runningInDocker: Boolean(process.env.FLEET_ROOT),
     monitoringEndpoints: [
       "/api/v1/monitor/overview",
       "/api/v1/monitor/vm",
@@ -453,6 +457,11 @@ app.get("/api/v1/meta", (req, res) => {
       "/api/v1/monitor/cluster",
       "/api/v1/monitor/stream",
       "/api/v1/status/live"
+    ],
+    proxyEndpoints: [
+      "GET /api/v1/sellers/:seller/proxies",
+      "POST /api/v1/sellers/:seller/proxies",
+      "DELETE /api/v1/sellers/:seller/proxies/:index"
     ]
   });
 });
@@ -626,6 +635,39 @@ app.post(
   "/api/v1/sellers/resume-all",
   asyncHandler(async (req, res) => {
     const result = await resumeAllSellers();
+    res.json(result);
+  })
+);
+
+// ── Proxy pool management ──────────────────────────────────────────────────
+// These endpoints are no-ops for sellers without proxies (return empty list).
+// Proxy is fully optional — sellers without a proxies.conf work normally.
+
+app.get(
+  "/api/v1/sellers/:seller/proxies",
+  asyncHandler(async (req, res) => {
+    const result = await listProxies(req.params.seller);
+    res.json(result);
+  })
+);
+
+app.post(
+  "/api/v1/sellers/:seller/proxies",
+  asyncHandler(async (req, res) => {
+    const proxy = typeof req.body?.proxy === "string" ? req.body.proxy.trim() : "";
+    if (!proxy) {
+      res.status(400).json({ error: "proxy is required (host:port:user:pass)" });
+      return;
+    }
+    const result = await addProxy(req.params.seller, proxy);
+    res.status(201).json(result);
+  })
+);
+
+app.delete(
+  "/api/v1/sellers/:seller/proxies/:index",
+  asyncHandler(async (req, res) => {
+    const result = await removeProxy(req.params.seller, req.params.index);
     res.json(result);
   })
 );

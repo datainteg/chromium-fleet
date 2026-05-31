@@ -29,7 +29,7 @@ The `--seller` flag is only an instance ID (`qa-team-1`, `automation-us`, `suppo
 ## Easy Chrome Setup
 1. Run the installer.
 2. Open your subdomain in a browser.
-3. Log in to your websites and install required extensions.
+3. Log into your target website and install required extensions.
 4. Restart VM/container whenever needed. Browser profile remains intact.
 
 ## Quick Start
@@ -88,27 +88,36 @@ curl -fsSL https://raw.githubusercontent.com/datainteg/chromium-fleet/main/insta
 
 ## API For Frontend Integration
 API docs: [`api/README.md`](./api/README.md)
-Boot-time API service installer: `api/install-service.sh`
+Service installer (Docker or systemd): `api/install-service.sh`
 
 Key endpoints:
-- `POST /api/v1/auth/login` (username/password -> token pair)
-- `POST /api/v1/auth/refresh` (rotate refresh token -> new pair)
-- `POST /api/v1/auth/logout` (revoke refresh token)
-- `GET /api/v1/monitor/overview`
-- `GET /api/v1/monitor/vm`
-- `GET /api/v1/monitor/fleet`
-- `GET /api/v1/monitor/stream` (live SSE status stream)
-- `GET /api/v1/status/live` (alias for live SSE stream)
-- `GET /api/v1/sellers`
-- `POST /api/v1/sellers`
-- `POST /api/v1/sellers/:seller/actions/:action`
-- `POST /api/v1/sellers/:seller/resume`
+- `POST /api/v1/auth/login` — username/password → JWT token pair
+- `POST /api/v1/auth/refresh` — rotate refresh token
+- `POST /api/v1/auth/logout` — revoke session
+- `GET /api/v1/monitor/overview` — VM + fleet health (frontend dashboard)
+- `GET /api/v1/monitor/stream` — live SSE status stream
+- `GET /api/v1/sellers` — list all sellers with Docker state
+- `GET /api/v1/sellers/:seller/proxies` — proxy pool (passwords masked)
+- `POST /api/v1/sellers/:seller/proxies` — add proxy to pool
+- `DELETE /api/v1/sellers/:seller/proxies/:index` — remove proxy
+- `POST /api/v1/sellers/:seller/actions/proxy-rotate` — rotate active proxy
+- `POST /api/v1/sellers/:seller/actions/:action` — start/stop/restart/recreate/update
+- `POST /api/v1/sellers/:seller/resume` — start if stopped
 - `POST /api/v1/sellers/resume-all`
 - `DELETE /api/v1/sellers/:seller`
 
-If Nginx setup uses default config, call API from:
-- `https://<your-subdomain>/api/...`
- - API calls require Nginx basic auth and API JWT auth by default.
+API calls require JWT auth (`Bearer <token>`) from `/api/v1/auth/login`.
+If accessed through Nginx, also requires Nginx basic auth.
+
+## Docker API Deployment
+The API runs as a Docker container for easy management:
+
+```bash
+cp api/.env.example api/.env  # fill in secrets
+sudo bash api/install-service.sh --docker
+```
+
+Logs: `docker compose -f docker-compose.fleet.yml logs -f api`
 
 ## Repository Structure
 ```text

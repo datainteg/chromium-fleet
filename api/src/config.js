@@ -71,7 +71,7 @@ const config = {
   allowActions: parseBoolean(process.env.ALLOW_ACTIONS, true),
   commandTimeoutMs: parsePositiveInt(process.env.COMMAND_TIMEOUT_MS, 15 * 60 * 1000),
   sellerRoot: process.env.SELLER_ROOT || "/opt",
-  fleetRoot: path.resolve(__dirname, "..", ".."),
+  fleetRoot: process.env.FLEET_ROOT || path.resolve(__dirname, "..", ".."),
   corsOrigins: parseOrigins(process.env.CORS_ORIGINS),
   monitorCacheTtlMs: clampPositiveInt(process.env.MONITOR_CACHE_TTL_MS, 500, 60_000, 4_000),
   monitorStreamDefaultIntervalMs: clampPositiveInt(

@@ -8,13 +8,13 @@
 #  The GCP VM is stopped/started on a schedule you control.
 #  When the VM starts again, Docker auto-starts the container
 #  (restart: unless-stopped). Chrome opens with the seller
-#  still logged into indiamart.com — no popup, no re-login.
+#  still logged into your target website — no popup, no re-login.
 #
 #  This works because:
 #
 #  1. ./profile is a bind-mount → /config inside the container.
 #     LinuxServer Chromium stores EVERYTHING here:
-#       • Login cookies (indiamart, any other site)
+#       • Login cookies (all sites)
 #       • localStorage / sessionStorage
 #       • Extension data & state
 #       • Open tabs (Last Session / Last Tabs files)
@@ -47,7 +47,7 @@
 #  ── What to do once, manually ────────────────────────────────
 #  After first install:
 #    1. Open http://your-subdomain in browser
-#    2. Log into indiamart.com as the seller
+#    2. Log into your target website
 #    3. Install any Chrome extensions you need
 #    4. Done — from this point, VM stop/start preserves everything.
 # =============================================================
@@ -456,20 +456,25 @@ crontab -l -u root 2>/dev/null \
 cat >> "$CRON_TMP" <<CRON
 
 
-# Auto-resume check shortly after VM boot
-@reboot sleep 75 && /usr/local/bin/${SELLER_NAME}-health.sh >/dev/null 2>&1
+# ── ${SELLER_NAME}: auto-resume on VM boot (server starts ~06:00 IST) ───
+# VM itself is the daily "fresh start" — stop at midnight, start at 6am.
+# This @reboot hook ensures Chrome is running within 90s of boot.
+@reboot sleep 90 && /usr/local/bin/${SELLER_NAME}-health.sh >/dev/null 2>&1
 
 # ── ${SELLER_NAME}: container health every 5 min ────────────────────────
 */5 * * * * /usr/local/bin/${SELLER_NAME}-health.sh >/dev/null 2>&1
 
-# ── ${SELLER_NAME}: clear logs daily at 00:15 UTC (05:45 IST) ───────────
-15 0 * * * /usr/local/bin/${SELLER_NAME}-clear-logs.sh >/dev/null 2>&1
+# ── ${SELLER_NAME}: clear logs + prune at 01:30 UTC (07:00 IST) ─────────
+# Server is UP by 00:30 UTC (06:00 IST). Run cleanup 1h after boot.
+30 1 * * * /usr/local/bin/${SELLER_NAME}-clear-logs.sh >/dev/null 2>&1
+45 1 * * * docker system prune -f >/dev/null 2>&1
 
 # ── ${SELLER_NAME}: clear logs 3 min after VM boot ──────────────────────
 @reboot sleep 180 && /usr/local/bin/${SELLER_NAME}-clear-logs.sh >/dev/null 2>&1
 
-# ── ${SELLER_NAME}: weekly image update Sun 21:00 UTC (02:30 IST Mon) ───
-0 21 * * 6 cd ${APP_DIR} && docker compose pull -q && docker compose up -d --force-recreate >/dev/null 2>&1
+# ── ${SELLER_NAME}: weekly image update Sun 02:00 UTC (07:30 IST) ───────
+# Server is running; pull latest image and recreate with fresh container.
+0 2 * * 0 cd ${APP_DIR} && docker compose pull -q && docker compose up -d --force-recreate >/dev/null 2>&1
 CRON
 
 crontab -u root "$CRON_TMP"
@@ -489,7 +494,7 @@ echo " Local : http://localhost:${CHROME_PORT}"
 echo ""
 echo " NEXT STEP:"
 echo "  1. Open http://your-subdomain in your browser"
-echo "  2. Log into indiamart.com as the seller"
+echo "  2. Log into your target website"
 echo "  3. Install any Chrome extensions you need"
 echo "  4. Done — VM stop/start will keep you logged in"
 echo "======================================"

@@ -1,0 +1,48 @@
+# chromium-fleet — Fleet Compose
+#
+# Runs the Node.js API control plane as a Docker service.
+# The API manages all Chrome seller containers via the Docker socket.
+#
+# Prerequisites:
+#   cp api/.env.example api/.env   # fill in secrets
+#   docker compose -f docker-compose.fleet.yml build
+#
+# Start / stop:
+#   docker compose -f docker-compose.fleet.yml up -d
+#   docker compose -f docker-compose.fleet.yml down
+#
+# Logs:
+#   docker compose -f docker-compose.fleet.yml logs -f api
+#
+# Notes:
+#   - network_mode: host keeps the API reachable at the same port (8787)
+#     as the host-based systemd approach, no port mapping needed.
+#   - /var/run/docker.sock gives the API full Docker control (same as root).
+#   - /opt is mounted so the API can read/write seller proxy configs and
+#     call per-seller scripts (start.sh, proxy-rotate.sh, etc.).
+#   - /fleet (this repo) is mounted read-only for fleet-level scripts.
+#   - Nginx and Chrome instances are managed outside this compose file:
+#       Nginx:  host service via nginx.sh (certbot SSL works on host)
+#       Chrome: per-seller /opt/<seller>-browser/docker-compose.yml
+
+services:
+  api:
+    image: chromium-fleet-api:latest
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: fleet-api
+    env_file: ./api/.env
+    environment:
+      - FLEET_ROOT=/fleet
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt:/opt
+      - ./:/fleet:ro
+    network_mode: host
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

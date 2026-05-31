@@ -15,8 +15,7 @@ REST control plane for `chromium-fleet`, built for frontend integration and oper
 ## Install
 ```bash
 cd api
-npm install
-cp .env.example .env
+cp .env.example .env   # fill in secrets
 ```
 
 Set at least:
@@ -24,23 +23,41 @@ Set at least:
 - `JWT_SECRET`, `REFRESH_TOKEN_SECRET`
 - `CORS_ORIGINS` for your frontend
 
-## Run
+## Run — Docker (recommended)
+
 ```bash
-cd api
-npm start
+# From repo root:
+sudo bash api/install-service.sh --docker
 ```
 
-Default: `http://0.0.0.0:8787`
+This builds a Docker image, starts the API container, and auto-restarts on boot/crash.
 
-## Auto-start On VM Boot
-For daily stop/start servers, install API as a systemd service:
+Manage:
+```bash
+docker compose -f docker-compose.fleet.yml logs -f api
+docker compose -f docker-compose.fleet.yml restart api
+docker compose -f docker-compose.fleet.yml down
+```
+
+The API container mounts `/var/run/docker.sock` (Docker control), `/opt` (seller dirs), and the repo root as `/fleet` (scripts).
+
+## Run — systemd (legacy)
 
 ```bash
 cd api
+npm install
 sudo bash install-service.sh
 ```
 
-This enables restart-on-failure and boot-time auto-start with a 256MB Node heap cap.
+## Run — development
+
+```bash
+cd api
+npm install
+npm run dev
+```
+
+Default: `http://0.0.0.0:8787`
 
 ## Auth Flow (Recommended)
 1. Login with username/password:
@@ -93,24 +110,47 @@ Content-Type: application/json
 If you call API through Nginx, default setup also enforces Nginx basic auth.
 
 ## Core Endpoints
-- `GET /healthz`
-- `GET /api/v1/meta`
-- `POST /api/v1/auth/login`
-- `POST /api/v1/auth/refresh`
-- `POST /api/v1/auth/logout`
-- `GET /api/v1/monitor/overview`
-- `GET /api/v1/monitor/vm`
-- `GET /api/v1/monitor/fleet`
-- `GET /api/v1/monitor/cluster`
-- `GET /api/v1/monitor/stream` (SSE live monitoring)
-- `GET /api/v1/status/live` (alias of monitor stream)
-- `GET /api/v1/sellers`
-- `GET /api/v1/sellers/:seller`
-- `POST /api/v1/sellers`
-- `POST /api/v1/sellers/:seller/actions/:action`
-- `POST /api/v1/sellers/:seller/resume`
-- `POST /api/v1/sellers/resume-all`
-- `DELETE /api/v1/sellers/:seller`
+
+### Health / Meta
+- `GET /healthz` — public health check
+- `GET /api/v1/meta` — server capabilities, auth mode, available actions
+
+### Auth
+- `POST /api/v1/auth/login` — username/password → token pair
+- `POST /api/v1/auth/refresh` — rotate refresh token → new pair
+- `POST /api/v1/auth/logout` — revoke refresh token
+
+### Monitoring
+- `GET /api/v1/monitor/overview` — VM + fleet health (cached)
+- `GET /api/v1/monitor/vm` — CPU, RAM, disk, swap
+- `GET /api/v1/monitor/fleet` — all sellers + Docker container stats
+- `GET /api/v1/monitor/cluster` — alias of fleet
+- `GET /api/v1/monitor/stream?intervalMs=15000` — SSE live stream
+- `GET /api/v1/status/live` — alias of monitor stream
+
+### Seller Management
+- `GET /api/v1/sellers` — list all sellers with Docker state
+- `GET /api/v1/sellers/:seller` — single seller detail
+- `POST /api/v1/sellers` — create seller (runs install.sh)
+- `POST /api/v1/sellers/:seller/actions/:action` — lifecycle actions
+- `POST /api/v1/sellers/:seller/resume` — start if stopped
+- `POST /api/v1/sellers/resume-all` — resume all stopped sellers
+- `DELETE /api/v1/sellers/:seller` — remove seller
+
+#### Seller Actions (`:action`)
+`start` · `stop` · `restart` · `recreate` · `update` · `status` · `proxy-status` · `proxy-rotate`
+
+### Proxy Pool Management
+Proxy is optional. Sellers without proxies work normally — these endpoints return empty lists.
+
+- `GET /api/v1/sellers/:seller/proxies` — list proxies (passwords masked)
+- `POST /api/v1/sellers/:seller/proxies` — add proxy to pool
+  ```json
+  { "proxy": "1.2.3.4:8080:user:pass" }
+  ```
+- `DELETE /api/v1/sellers/:seller/proxies/:index` — remove proxy by index (0-based)
+- `POST /api/v1/sellers/:seller/actions/proxy-rotate` — rotate to next alive proxy
+- `POST /api/v1/sellers/:seller/actions/proxy-status` — live proxy health check
 
 ## Live Status Stream (SSE)
 Use this for continuous frontend dashboard updates:
