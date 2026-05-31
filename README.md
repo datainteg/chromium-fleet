@@ -78,6 +78,7 @@ curl -fsSL https://raw.githubusercontent.com/datainteg/chromium-fleet/main/insta
 | `--cpu` | `1.5` | No | Docker CPU limit |
 | `--shm` | `2gb` | No | `/dev/shm` size |
 | `--swap` | `4G` | No | Swap file size |
+| `--api-port` | `8787` | No | Local API upstream port for Nginx `/api` proxy |
 | `--proxy` | — | No | `host:port:user:pass` — repeatable |
 
 ---
@@ -146,6 +147,7 @@ Proxy support is **opt-in** — only active when `--proxy` is passed.
 
 ### Nginx (`nginx.sh`)
 - Reverse proxy → `localhost:{PORT}`
+- `/api/*` reverse proxy -> `localhost:{API_PORT}` for frontend integration
 - WebSocket pass-through (required for KasmVNC/noVNC)
 - Per-seller Basic Auth via htpasswd
 - `/healthz` endpoint (no auth) for uptime monitoring
@@ -213,6 +215,7 @@ npm start
 
 Key endpoints:
 
+- `POST /api/v1/auth/login` (username/password -> JWT)
 - `GET /api/v1/monitor/overview`
 - `GET /api/v1/monitor/vm`
 - `GET /api/v1/monitor/fleet`
@@ -222,6 +225,8 @@ Key endpoints:
 - `DELETE /api/v1/sellers/:seller`
 
 See full usage in [`api/README.md`](./api/README.md).
+
+If Nginx setup uses default config, access API via `https://<seller-domain>/api/...`.
 
 ---
 

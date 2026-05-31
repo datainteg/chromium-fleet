@@ -34,11 +34,30 @@ function parseOrigins(value) {
     .filter(Boolean);
 }
 
+function parseString(value, fallback = "") {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+  const normalized = value.trim();
+  return normalized || fallback;
+}
+
+const authUsername = parseString(process.env.AUTH_USERNAME, "");
+const authPassword = parseString(process.env.AUTH_PASSWORD, "");
+const jwtSecret = parseString(process.env.JWT_SECRET, "");
+
 const config = {
   port: parsePositiveInt(process.env.PORT, 8787),
   host: process.env.HOST || "0.0.0.0",
   apiKey: process.env.API_KEY || "",
+  authUsername,
+  authPassword,
+  jwtSecret,
+  jwtExpiresIn: parseString(process.env.JWT_EXPIRES_IN, "12h"),
+  jwtIssuer: parseString(process.env.JWT_ISSUER, "chromium-fleet-api"),
+  jwtAudience: parseString(process.env.JWT_AUDIENCE, "chromium-fleet-clients"),
   disableAuth: parseBoolean(process.env.DISABLE_AUTH, false),
+  allowApiKeyAuth: parseBoolean(process.env.ALLOW_API_KEY_AUTH, false),
   allowInstall: parseBoolean(process.env.ALLOW_INSTALL, true),
   allowUninstall: parseBoolean(process.env.ALLOW_UNINSTALL, true),
   allowActions: parseBoolean(process.env.ALLOW_ACTIONS, true),

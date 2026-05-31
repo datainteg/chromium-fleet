@@ -11,6 +11,7 @@
 #         --user      admin \
 #         --pass      "StrongPass!" \
 #         --subdomain seller1.yourdomain.com \
+#         [--api-port 8787]                    (optional, default: 8787)
 #         [--proxy    "host:port:user:pass"]   (optional, repeatable)
 # =============================================================
 set -euo pipefail
@@ -28,6 +29,7 @@ MEM_LIMIT="3g"
 CPU_LIMIT="1.5"
 SHM_SIZE="2gb"
 SWAP_SIZE="4G"
+API_PORT="8787"
 PROXIES=()
 
 # ─── Colours ─────────────────────────────────────────────────
@@ -79,6 +81,7 @@ usage() {
   echo "  --cpu         LIMIT       Docker CPU limit          (default: 1.5)"
   echo "  --shm         SIZE        /dev/shm size             (default: 2gb)"
   echo "  --swap        SIZE        Swap size                 (default: 4G)"
+  echo "  --api-port    PORT        Local API upstream port   (default: 8787)"
   echo "  --proxy       PROXY       host:port:user:pass       (optional, repeatable)"
   echo "  --help                    Show this message"
   echo ""
@@ -107,6 +110,7 @@ while [[ $# -gt 0 ]]; do
     --cpu)       [[ $# -lt 2 ]] && { err "Missing value for --cpu"; usage; exit 1; }; CPU_LIMIT="$2"; shift 2 ;;
     --shm)       [[ $# -lt 2 ]] && { err "Missing value for --shm"; usage; exit 1; }; SHM_SIZE="$2"; shift 2 ;;
     --swap)      [[ $# -lt 2 ]] && { err "Missing value for --swap"; usage; exit 1; }; SWAP_SIZE="$2"; shift 2 ;;
+    --api-port)  [[ $# -lt 2 ]] && { err "Missing value for --api-port"; usage; exit 1; }; API_PORT="$2"; shift 2 ;;
     --proxy)     [[ $# -lt 2 ]] && { err "Missing value for --proxy"; usage; exit 1; }; PROXIES+=("$2"); shift 2 ;;
     --help|-h)   usage; exit 0 ;;
     *) err "Unknown option: $1"; usage; exit 1 ;;
@@ -119,6 +123,7 @@ ERRORS=()
 [[ -z "$SUBDOMAIN"   ]] && ERRORS+=("--subdomain is required")
 is_valid_seller_name "$SELLER_NAME" || ERRORS+=("--seller must match: ^[a-z0-9][a-z0-9_-]{0,31}$")
 is_valid_port "$CHROME_PORT" || ERRORS+=("--port must be a number between 1 and 65535")
+is_valid_port "$API_PORT" || ERRORS+=("--api-port must be a number between 1 and 65535")
 for proxy in "${PROXIES[@]}"; do
   is_valid_proxy "$proxy" || ERRORS+=("Invalid --proxy value '$proxy' (expected host:port:user:pass with numeric port)")
 done
@@ -145,6 +150,7 @@ info "Mem Limit  : $MEM_LIMIT"
 info "CPU Limit  : $CPU_LIMIT"
 info "SHM Size   : $SHM_SIZE"
 info "Swap Size  : $SWAP_SIZE"
+info "API Port   : $API_PORT"
 if [[ ${#PROXIES[@]} -gt 0 ]]; then
   info "Proxies    : ${#PROXIES[@]} configured"
   for i in "${!PROXIES[@]}"; do
@@ -191,7 +197,7 @@ fi
 log "Running Nginx setup..."
 SELLER_NAME="$SELLER_NAME" CHROME_PORT="$CHROME_PORT" \
 CHROME_USER="$CHROME_USER" CHROME_PASS="$CHROME_PASS" \
-SUBDOMAIN="$SUBDOMAIN" bash "$TMP_DIR/nginx.sh"
+SUBDOMAIN="$SUBDOMAIN" API_PORT="$API_PORT" bash "$TMP_DIR/nginx.sh"
 
 # ─── Done ────────────────────────────────────────────────────
 echo ""

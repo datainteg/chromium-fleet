@@ -12,7 +12,7 @@ cp .env.example .env
 
 Edit `.env` and set at least:
 
-- `API_KEY` to a strong secret
+- `AUTH_USERNAME`, `AUTH_PASSWORD`, `JWT_SECRET`
 - `CORS_ORIGINS` to your frontend URL(s)
 
 ## 2) Run
@@ -26,10 +26,27 @@ Default server: `http://0.0.0.0:8787`
 
 ## 3) Auth
 
-Use either:
+Default mode is username/password login + JWT bearer token.
 
-- Header `x-api-key: <API_KEY>`
-- Header `Authorization: Bearer <API_KEY>`
+1. `POST /api/v1/auth/login` with:
+
+```json
+{
+  "username": "admin",
+  "password": "your-password"
+}
+```
+
+2. Use returned access token:
+
+```http
+Authorization: Bearer <accessToken>
+```
+
+Optional legacy mode:
+
+- Set `ALLOW_API_KEY_AUTH=true`
+- Send `x-api-key: <API_KEY>`
 
 `/healthz` is public. `/api/*` requires auth unless `DISABLE_AUTH=true`.
 
@@ -42,6 +59,10 @@ Health check.
 ### `GET /api/v1/meta`
 
 Server capabilities and supported actions.
+
+### `POST /api/v1/auth/login`
+
+Login with username/password and receive JWT access token.
 
 ### `GET /api/v1/monitor/overview`
 

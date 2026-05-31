@@ -3,6 +3,7 @@ const crypto = require("node:crypto");
 const cors = require("cors");
 const express = require("express");
 const helmet = require("helmet");
+const jwt = require("jsonwebtoken");
 
 const { config } = require("./config");
 const {
@@ -49,18 +50,45 @@ function timingSafeEqual(left, right) {
   return crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
-function readProvidedApiKey(req) {
+function readApiKey(req) {
   const headerValue = req.headers["x-api-key"];
   if (typeof headerValue === "string" && headerValue.trim() !== "") {
     return headerValue.trim();
   }
+  return "";
+}
 
+function readBearerToken(req) {
   const authHeader = req.headers.authorization;
   if (typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
-    return authHeader.slice("Bearer ".length).trim();
+    const token = authHeader.slice("Bearer ".length).trim();
+    return token || "";
   }
-
   return "";
+}
+
+function getAuthMode() {
+  const jwtConfigured =
+    Boolean(config.authUsername) &&
+    Boolean(config.authPassword) &&
+    Boolean(config.jwtSecret);
+  const apiKeyConfigured = Boolean(config.apiKey) && config.allowApiKeyAuth;
+  return {
+    jwtConfigured,
+    apiKeyConfigured
+  };
+}
+
+function buildAccessToken(subject) {
+  return jwt.sign(
+    { sub: subject, role: "api-client" },
+    config.jwtSecret,
+    {
+      expiresIn: config.jwtExpiresIn,
+      issuer: config.jwtIssuer,
+      audience: config.jwtAudience
+    }
+  );
 }
 
 function authMiddleware(req, res, next) {
@@ -69,20 +97,56 @@ function authMiddleware(req, res, next) {
     return;
   }
 
-  if (!config.apiKey) {
+  const authMode = getAuthMode();
+  if (!authMode.jwtConfigured && !authMode.apiKeyConfigured) {
     res.status(500).json({
-      error: "Server auth misconfigured: API_KEY is missing"
+      error: "Server auth misconfigured: set JWT credentials or enable API key auth"
     });
     return;
   }
 
-  const providedKey = readProvidedApiKey(req);
-  if (!timingSafeEqual(providedKey, config.apiKey)) {
+  const bearerToken = readBearerToken(req);
+  if (bearerToken && authMode.jwtConfigured) {
+    try {
+      const claims = jwt.verify(bearerToken, config.jwtSecret, {
+        issuer: config.jwtIssuer,
+        audience: config.jwtAudience
+      });
+      req.auth = {
+        method: "jwt",
+        subject: claims.sub || null
+      };
+      next();
+      return;
+    } catch (error) {
+      res.status(401).json({ error: "Invalid or expired token" });
+      return;
+    }
+  }
+
+  if (authMode.apiKeyConfigured) {
+    const providedKey = readApiKey(req);
+    if (timingSafeEqual(providedKey, config.apiKey)) {
+      req.auth = {
+        method: "apiKey",
+        subject: "api-key-client"
+      };
+      next();
+      return;
+    }
+  }
+
+  if (authMode.jwtConfigured) {
+    res.status(401).json({ error: "Unauthorized: Bearer token required" });
+    return;
+  }
+
+  if (!authMode.apiKeyConfigured) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
 
-  next();
+  res.status(401).json({ error: "Unauthorized" });
 }
 
 function asyncHandler(handler) {
@@ -98,13 +162,54 @@ app.get("/healthz", (req, res) => {
   });
 });
 
+app.post("/api/v1/auth/login", (req, res) => {
+  if (config.disableAuth) {
+    res.status(400).json({ error: "Auth is disabled on this server" });
+    return;
+  }
+
+  const authMode = getAuthMode();
+  if (!authMode.jwtConfigured) {
+    res.status(500).json({
+      error: "JWT auth is not configured on this server"
+    });
+    return;
+  }
+
+  const username = typeof req.body?.username === "string" ? req.body.username.trim() : "";
+  const password = typeof req.body?.password === "string" ? req.body.password : "";
+
+  if (!timingSafeEqual(username, config.authUsername) || !timingSafeEqual(password, config.authPassword)) {
+    res.status(401).json({ error: "Invalid username or password" });
+    return;
+  }
+
+  const accessToken = buildAccessToken(config.authUsername);
+  const decoded = jwt.decode(accessToken);
+  const expiresInSeconds =
+    decoded && typeof decoded === "object" && decoded.exp && decoded.iat
+      ? Math.max(0, decoded.exp - decoded.iat)
+      : null;
+
+  res.json({
+    tokenType: "Bearer",
+    accessToken,
+    expiresInSeconds
+  });
+});
+
 app.use("/api", authMiddleware);
 
 app.get("/api/v1/meta", (req, res) => {
+  const authMode = getAuthMode();
   res.json({
     service: "chromium-fleet-api",
-    version: "0.1.0",
+    version: "0.2.0",
     authEnabled: !config.disableAuth,
+    authMode: {
+      jwtEnabled: authMode.jwtConfigured,
+      apiKeyEnabled: authMode.apiKeyConfigured
+    },
     allowInstall: config.allowInstall,
     allowUninstall: config.allowUninstall,
     allowActions: config.allowActions,
