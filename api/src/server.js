@@ -21,9 +21,16 @@ const {
   addProxy,
   removeProxy,
   getSellerLogs,
-  testSellerProxies
+  testSellerProxies,
+  fleetBulkAction,
+  getSellerExtensions,
+  deleteSellerExtension,
+  getSellerBackups,
+  restoreSellerBackup
 } = require("./fleetService");
 const { initSessions, getSessions, getSession, setSession, deleteSession } = require("./sessions");
+const { recordEvent, getEvents } = require("./events");
+const { sendWebhook } = require("./webhook");
 const {
   getFleetUsage,
   getMonitoringOverviewCached,
@@ -493,6 +500,16 @@ app.get("/api/v1/meta", (req, res) => {
       "GET /api/v1/sellers/:seller/proxies",
       "POST /api/v1/sellers/:seller/proxies",
       "DELETE /api/v1/sellers/:seller/proxies/:index"
+    ],
+    bulkActionEndpoint: "POST /api/v1/sellers/actions/:action",
+    newEndpoints: [
+      "GET /api/v1/sellers/:seller/events",
+      "GET /api/v1/sellers/:seller/extensions",
+      "DELETE /api/v1/sellers/:seller/extensions/:name",
+      "GET /api/v1/sellers/:seller/backups",
+      "POST /api/v1/sellers/:seller/restore/:filename",
+      "GET /api/v1/sellers/:seller/logs",
+      "GET /api/v1/sellers/:seller/proxies/test"
     ]
   });
 });
@@ -689,6 +706,58 @@ app.get(
   })
 );
 
+// ── Fleet bulk action (all sellers) ───────────────────────────────────────
+app.post(
+  "/api/v1/sellers/actions/:action",
+  asyncHandler(async (req, res) => {
+    const result = await fleetBulkAction(req.params.action);
+    res.json(result);
+  })
+);
+
+// ── Seller health events ───────────────────────────────────────────────────
+app.get(
+  "/api/v1/sellers/:seller/events",
+  asyncHandler(async (req, res) => {
+    const events = getEvents(req.params.seller);
+    res.json({ seller: req.params.seller, count: events.length, events });
+  })
+);
+
+// ── Extension management ───────────────────────────────────────────────────
+app.get(
+  "/api/v1/sellers/:seller/extensions",
+  asyncHandler(async (req, res) => {
+    const result = await getSellerExtensions(req.params.seller);
+    res.json(result);
+  })
+);
+
+app.delete(
+  "/api/v1/sellers/:seller/extensions/:name",
+  asyncHandler(async (req, res) => {
+    const result = await deleteSellerExtension(req.params.seller, req.params.name);
+    res.json(result);
+  })
+);
+
+// ── Profile backup management ──────────────────────────────────────────────
+app.get(
+  "/api/v1/sellers/:seller/backups",
+  asyncHandler(async (req, res) => {
+    const result = await getSellerBackups(req.params.seller);
+    res.json(result);
+  })
+);
+
+app.post(
+  "/api/v1/sellers/:seller/restore/:filename",
+  asyncHandler(async (req, res) => {
+    const result = await restoreSellerBackup(req.params.seller, req.params.filename);
+    res.json(result);
+  })
+);
+
 // ── Proxy pool management ──────────────────────────────────────────────────
 // These endpoints are no-ops for sellers without proxies (return empty list).
 // Proxy is fully optional — sellers without a proxies.conf work normally.
@@ -736,12 +805,51 @@ app.use((error, req, res, next) => {
   });
 });
 
+function startStateWatcher() {
+  const previousStates = new Map();
+  let initialized = false;
+
+  const check = async () => {
+    try {
+      const sellers = await listSellers();
+      for (const s of sellers) {
+        const prev = previousStates.get(s.seller);
+        previousStates.set(s.seller, s.containerState);
+        if (!initialized) continue;
+        if (prev !== undefined && prev !== s.containerState) {
+          const eventType = s.running ? "seller_recovered" : "seller_crashed";
+          recordEvent(s.seller, eventType, {
+            containerState: s.containerState,
+            previousState: prev
+          });
+          void sendWebhook(config.webhookUrl, {
+            event: eventType,
+            seller: s.seller,
+            containerState: s.containerState,
+            previousState: prev
+          });
+        }
+      }
+      initialized = true;
+    } catch {
+      // non-fatal
+    }
+  };
+
+  setTimeout(async () => {
+    await check();
+    setInterval(check, 30_000);
+  }, 5_000);
+}
+
 async function start() {
   await initSessions(config.sessionsFile);
   const authMode = config.disableAuth ? "disabled" : "enabled";
   const httpServer = app.listen(config.port, config.host, () => {
     console.log(`chromium-fleet-api listening on http://${config.host}:${config.port} (auth ${authMode})`);
   });
+
+  startStateWatcher();
 
   process.on("SIGTERM", () => {
     httpServer.close(() => process.exit(0));

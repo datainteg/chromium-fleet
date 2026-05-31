@@ -259,6 +259,16 @@ async function createSeller(payload) {
     throw error;
   }
 
+  if (process.env.FLEET_ROOT) {
+    const error = new Error(
+      "Seller creation requires running install.sh directly on the host. " +
+      "The API cannot provision new sellers when running in Docker mode (FLEET_ROOT is set). " +
+      "SSH into the VM and run: bash /fleet/install.sh --seller NAME --pass PASS --subdomain DOMAIN"
+    );
+    error.statusCode = 501;
+    throw error;
+  }
+
   const input = validateInstallPayload(payload);
 
   if (input.port && await isPortInUse(input.port)) {
@@ -381,49 +391,33 @@ async function resumeSeller(seller) {
 async function resumeAllSellers() {
   const sellers = await listSellers();
   const results = [];
+  const CONCURRENCY = 3;
 
-  for (const seller of sellers) {
-    try {
-      if (seller.running) {
-        results.push({
-          seller: seller.seller,
-          resumed: false,
-          reason: "already-running",
-          before: seller,
-          after: seller
-        });
-        continue;
-      }
-
-      const actionResult = await runSellerAction(seller.seller, "start");
-      const after = await getSellerSummary(seller.seller);
-      results.push({
-        seller: seller.seller,
-        resumed: true,
-        reason: "started",
-        before: seller,
-        after,
-        result: actionResult.result
-      });
-    } catch (error) {
-      results.push({
-        seller: seller.seller,
-        resumed: false,
-        reason: "failed",
-        error: error.message || "failed to resume seller"
-      });
+  for (let i = 0; i < sellers.length; i += CONCURRENCY) {
+    const batch = sellers.slice(i, i + CONCURRENCY);
+    const settled = await Promise.allSettled(
+      batch.map(async (seller) => {
+        if (seller.running) {
+          return { seller: seller.seller, resumed: false, reason: "already-running", before: seller, after: seller };
+        }
+        const actionResult = await runSellerAction(seller.seller, "start");
+        const after = await getSellerSummary(seller.seller);
+        return { seller: seller.seller, resumed: true, reason: "started", before: seller, after, result: actionResult.result };
+      })
+    );
+    for (let j = 0; j < settled.length; j++) {
+      const r = settled[j];
+      results.push(
+        r.status === "fulfilled"
+          ? r.value
+          : { seller: batch[j]?.seller || "unknown", resumed: false, reason: "failed", error: r.reason?.message || "failed to resume" }
+      );
     }
   }
 
-  const resumedCount = results.filter((item) => item.resumed).length;
-  const failedCount = results.filter((item) => item.reason === "failed").length;
-
-  return {
-    total: results.length,
-    resumedCount,
-    failedCount,
-    results
-  };
+  const resumedCount = results.filter((r) => r.resumed).length;
+  const failedCount = results.filter((r) => r.reason === "failed").length;
+  return { total: results.length, resumedCount, failedCount, results };
 }
 
 async function listProxies(seller) {
@@ -616,6 +610,178 @@ async function testSellerProxies(seller) {
   return { seller, count: proxies.length, proxies };
 }
 
+async function fleetBulkAction(action) {
+  if (!config.allowActions) {
+    throw Object.assign(new Error("Seller actions are disabled by server configuration"), { statusCode: 403 });
+  }
+  if (!SELLER_ACTIONS[action]) {
+    throw Object.assign(new Error(`Unsupported action '${action}'`), { statusCode: 400 });
+  }
+
+  const sellers = await listSellers();
+  const results = [];
+  const CONCURRENCY = 3;
+
+  for (let i = 0; i < sellers.length; i += CONCURRENCY) {
+    const batch = sellers.slice(i, i + CONCURRENCY);
+    const settled = await Promise.allSettled(
+      batch.map(async (seller) => {
+        const r = await runSellerAction(seller.seller, action);
+        return { seller: seller.seller, success: true, result: r.result };
+      })
+    );
+    for (let j = 0; j < settled.length; j++) {
+      const r = settled[j];
+      results.push(
+        r.status === "fulfilled"
+          ? r.value
+          : { seller: batch[j]?.seller || "unknown", success: false, error: r.reason?.message || "failed" }
+      );
+    }
+  }
+
+  return {
+    action,
+    total: results.length,
+    successCount: results.filter((r) => r.success).length,
+    failedCount: results.filter((r) => !r.success).length,
+    results
+  };
+}
+
+async function getSellerExtensions(seller) {
+  if (!isValidSellerName(seller)) {
+    throw Object.assign(new Error("Invalid seller name"), { statusCode: 400 });
+  }
+  const sellerPaths = buildSellerPaths(seller);
+  if (!await readTextIfExists(sellerPaths.composeFile)) {
+    throw Object.assign(new Error("Seller not found"), { statusCode: 404 });
+  }
+
+  const extDir = path.join(sellerPaths.appDir, "extensions");
+  try {
+    const entries = await fs.readdir(extDir, { withFileTypes: true });
+    const extensions = entries
+      .filter((e) => !e.name.startsWith("."))
+      .map((e) => ({ name: e.name, type: e.isDirectory() ? "unpacked" : "crx" }));
+    return { seller, count: extensions.length, extensions };
+  } catch {
+    return { seller, count: 0, extensions: [] };
+  }
+}
+
+async function deleteSellerExtension(seller, name) {
+  if (!isValidSellerName(seller)) {
+    throw Object.assign(new Error("Invalid seller name"), { statusCode: 400 });
+  }
+  if (!name || name.includes("/") || name.includes("\\") || name.startsWith(".") || name === "." || name === "..") {
+    throw Object.assign(new Error("Invalid extension name"), { statusCode: 400 });
+  }
+  const sellerPaths = buildSellerPaths(seller);
+  if (!await readTextIfExists(sellerPaths.composeFile)) {
+    throw Object.assign(new Error("Seller not found"), { statusCode: 404 });
+  }
+
+  const extDir = path.join(sellerPaths.appDir, "extensions");
+  const extPath = path.resolve(extDir, name);
+  if (!extPath.startsWith(extDir + path.sep) && extPath !== extDir) {
+    throw Object.assign(new Error("Invalid extension name"), { statusCode: 400 });
+  }
+  if (!await fileExists(extPath)) {
+    throw Object.assign(new Error(`Extension not found: ${name}`), { statusCode: 404 });
+  }
+
+  const stat = await fs.stat(extPath);
+  if (stat.isDirectory()) {
+    await fs.rm(extPath, { recursive: true, force: true });
+  } else {
+    await fs.unlink(extPath);
+  }
+  return { seller, deleted: name };
+}
+
+async function getSellerBackups(seller) {
+  if (!isValidSellerName(seller)) {
+    throw Object.assign(new Error("Invalid seller name"), { statusCode: 400 });
+  }
+  const sellerPaths = buildSellerPaths(seller);
+  if (!await readTextIfExists(sellerPaths.composeFile)) {
+    throw Object.assign(new Error("Seller not found"), { statusCode: 404 });
+  }
+
+  const backupDir = path.join(sellerPaths.appDir, "backups");
+  try {
+    const entries = await fs.readdir(backupDir);
+    const files = entries.filter((f) => /^profile-\d{8}\.tar\.gz$/.test(f)).sort().reverse();
+    const backups = await Promise.all(
+      files.map(async (filename) => {
+        try {
+          const stat = await fs.stat(path.join(backupDir, filename));
+          return { filename, sizeBytes: stat.size };
+        } catch {
+          return { filename, sizeBytes: null };
+        }
+      })
+    );
+    return { seller, count: backups.length, backups };
+  } catch {
+    return { seller, count: 0, backups: [] };
+  }
+}
+
+async function restoreSellerBackup(seller, filename) {
+  if (!isValidSellerName(seller)) {
+    throw Object.assign(new Error("Invalid seller name"), { statusCode: 400 });
+  }
+  if (!/^profile-\d{8}\.tar\.gz$/.test(filename)) {
+    throw Object.assign(new Error("Invalid backup filename. Expected: profile-YYYYMMDD.tar.gz"), { statusCode: 400 });
+  }
+
+  const sellerPaths = buildSellerPaths(seller);
+  if (!await readTextIfExists(sellerPaths.composeFile)) {
+    throw Object.assign(new Error("Seller not found"), { statusCode: 404 });
+  }
+
+  const backupPath = path.join(sellerPaths.appDir, "backups", filename);
+  if (!await fileExists(backupPath)) {
+    throw Object.assign(new Error(`Backup not found: ${filename}`), { statusCode: 404 });
+  }
+
+  // Stop container first (allow 45s for Chrome to flush session)
+  await runCommand("docker", ["compose", "stop"], {
+    cwd: sellerPaths.appDir,
+    allowFailure: true,
+    timeoutMs: 45_000
+  });
+
+  // Preserve current profile as safety snapshot
+  const safetyName = `profile-pre-restore-${Date.now()}`;
+  await fs.rename(
+    path.join(sellerPaths.appDir, "profile"),
+    path.join(sellerPaths.appDir, safetyName)
+  ).catch(() => {});
+
+  // Extract backup (creates ./profile/ directory)
+  await runCommand("tar", ["-xzf", backupPath, "-C", sellerPaths.appDir], {
+    timeoutMs: 120_000
+  });
+
+  // Fix ownership — Chrome writes as PUID=1000
+  await runCommand("chown", ["-R", "1000:1000", path.join(sellerPaths.appDir, "profile")], {
+    allowFailure: true,
+    timeoutMs: 30_000
+  });
+
+  // Resume container
+  await runCommand("docker", ["compose", "start"], {
+    cwd: sellerPaths.appDir,
+    allowFailure: true,
+    timeoutMs: 30_000
+  });
+
+  return { seller, restored: filename, previousProfileSaved: safetyName };
+}
+
 module.exports = {
   listSellers,
   getSellerSummary,
@@ -624,10 +790,15 @@ module.exports = {
   runSellerAction,
   resumeSeller,
   resumeAllSellers,
+  fleetBulkAction,
   listProxies,
   addProxy,
   removeProxy,
   getSellerLogs,
   testSellerProxies,
+  getSellerExtensions,
+  deleteSellerExtension,
+  getSellerBackups,
+  restoreSellerBackup,
   SELLER_ACTIONS
 };

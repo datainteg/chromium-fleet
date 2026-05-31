@@ -105,6 +105,11 @@ Key endpoints:
 - `POST /api/v1/sellers/:seller/resume` — start if stopped
 - `POST /api/v1/sellers/resume-all`
 - `DELETE /api/v1/sellers/:seller`
+- `GET /api/v1/sellers/:seller/events` — crash/recovery event log
+- `POST /api/v1/sellers/actions/:action` — fleet-wide bulk action
+- `GET /api/v1/sellers/:seller/extensions` — list installed extensions
+- `GET /api/v1/sellers/:seller/backups` — list profile backups
+- `POST /api/v1/sellers/:seller/restore/:filename` — restore session from backup
 
 API calls require JWT auth (`Bearer <token>`) from `/api/v1/auth/login`.
 If accessed through Nginx, also requires Nginx basic auth.
@@ -118,6 +123,14 @@ sudo bash api/install-service.sh --docker
 ```
 
 Logs: `docker compose -f docker-compose.fleet.yml logs -f api`
+
+## Crash Alerts via Webhook
+
+Set `WEBHOOK_URL` in `api/.env` to get notified when a Chrome instance crashes or recovers (Discord, Slack, or any HTTP endpoint).
+
+```env
+WEBHOOK_URL=https://discord.com/api/webhooks/YOUR_ID/YOUR_TOKEN
+```
 
 ## Repository Structure
 ```text

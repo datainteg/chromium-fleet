@@ -152,6 +152,33 @@ Proxy is optional. Sellers without proxies work normally — these endpoints ret
 - `POST /api/v1/sellers/:seller/actions/proxy-rotate` — rotate to next alive proxy
 - `POST /api/v1/sellers/:seller/actions/proxy-status` — live proxy health check
 
+### Seller Health Events
+Automatic crash/recovery detection — events recorded when container state changes. State watcher polls every 30 seconds.
+
+- `GET /api/v1/sellers/:seller/events` — last 50 health events (crash, recovery, etc.)
+
+### Fleet Bulk Actions
+Run one action across all sellers simultaneously (concurrency-limited to 3 at a time).
+
+- `POST /api/v1/sellers/actions/:action` — same actions as per-seller: `start` · `stop` · `restart` · `recreate` · `update`
+
+### Extension Management
+The `./extensions/` directory is mounted read-only into Chrome. Drop `.crx` files or unpacked extension folders there and install them once in the browser — they persist in `./profile` after that.
+
+- `GET /api/v1/sellers/:seller/extensions` — list extensions in `./extensions/` dir
+- `DELETE /api/v1/sellers/:seller/extensions/:name` — remove a `.crx` file or unpacked folder
+
+### Profile Backup & Restore
+Daily backups are created automatically (cron at 02:00 UTC). Restore replaces the current profile — container stops, profile is swapped, container restarts.
+
+- `GET /api/v1/sellers/:seller/backups` — list available backups with file sizes
+- `POST /api/v1/sellers/:seller/restore/:filename` — restore from `profile-YYYYMMDD.tar.gz`
+  - Container stops gracefully (30s flush), current profile saved as `profile-pre-restore-<ts>`, backup extracted, container restarts.
+  - **Destructive** — current session is replaced. Current profile is preserved as `profile-pre-restore-*` in the app dir.
+
+### Seller Logs
+- `GET /api/v1/sellers/:seller/logs?lines=100` — last N Docker container logs (max 1000)
+
 ## Live Status Stream (SSE)
 Use this for continuous frontend dashboard updates:
 
@@ -185,10 +212,58 @@ Notes:
 }
 ```
 
+## Webhook Crash Alerts
+
+Set `WEBHOOK_URL` in `.env` to receive a POST when a seller crashes or recovers.
+
+Compatible with Discord, Slack, and any HTTP endpoint:
+
+```env
+# Discord
+WEBHOOK_URL=https://discord.com/api/webhooks/YOUR_ID/YOUR_TOKEN
+
+# Slack
+WEBHOOK_URL=https://hooks.slack.com/services/T.../B.../...
+```
+
+Payload sent on crash/recovery:
+```json
+{
+  "service": "chromium-fleet",
+  "event": "seller_crashed",
+  "seller": "qa-team-1",
+  "containerState": "exited",
+  "previousState": "running",
+  "timestamp": "2025-01-01T03:00:00.000Z"
+}
+```
+
+Events: `seller_crashed` | `seller_recovered`
+
+## CORS — Production Setup
+
+`CORS_ORIGINS` controls which browser origins can call the API directly.
+
+```env
+# api/.env
+CORS_ORIGINS=https://dashboard.yourdomain.com,https://admin.yourdomain.com
+```
+
+If the frontend is served from the same subdomain as Nginx (e.g. `https://chrome1.yourdomain.com`), add it to `CORS_ORIGINS`.
+
+When calling the API **through Nginx** (`/api/...`), requests also require Nginx basic auth. Frontend must include `Authorization: Basic ...` header alongside `Authorization: Bearer <token>`. Use two separate headers or proxy the API on a different subdomain without basic auth if needed.
+
+For local development:
+```env
+CORS_ORIGINS=http://localhost:3000,http://localhost:5173
+```
+
 ## Notes
-- Run API with permission to execute Docker and fleet scripts (typically root on VM).
-- Command output is returned in API responses as `result.stdout` / `result.stderr`.
-- For low-RAM VMs, tune `.env` monitor values: `MONITOR_CACHE_TTL_MS`, `MONITOR_STREAM_*`.
+
+- Run API with permission to execute Docker and fleet scripts (root on VM, or Docker with `/var/run/docker.sock` mount).
+- Command output is in `result.stdout` / `result.stderr` in API responses.
+- For low-RAM VMs tune `.env`: `MONITOR_CACHE_TTL_MS`, `MONITOR_STREAM_*`.
+- `createSeller` (install) does not work in Docker API mode — run `install.sh` on host directly.
 
 ## Support
 - Author: `Datainteg`
