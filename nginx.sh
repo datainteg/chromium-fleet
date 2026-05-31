@@ -12,6 +12,21 @@ CHROME_USER="${CHROME_USER:-admin}"
 CHROME_PASS="${CHROME_PASS:?CHROME_PASS is required}"
 SUBDOMAIN="${SUBDOMAIN:?SUBDOMAIN is required}"
 
+if ! [[ "$SELLER_NAME" =~ ^[a-z0-9][a-z0-9_-]{0,31}$ ]]; then
+  echo "ERROR: SELLER_NAME must match ^[a-z0-9][a-z0-9_-]{0,31}$"
+  exit 1
+fi
+
+if ! [[ "$CHROME_PORT" =~ ^[0-9]+$ ]] || (( CHROME_PORT < 1 || CHROME_PORT > 65535 )); then
+  echo "ERROR: CHROME_PORT must be between 1 and 65535"
+  exit 1
+fi
+
+if ! [[ "$SUBDOMAIN" =~ ^[A-Za-z0-9.-]+$ ]]; then
+  echo "ERROR: SUBDOMAIN contains invalid characters"
+  exit 1
+fi
+
 NGINX_AVAIL="/etc/nginx/sites-available"
 NGINX_ENABLED="/etc/nginx/sites-enabled"
 CONF_NAME="${SELLER_NAME}-chrome"

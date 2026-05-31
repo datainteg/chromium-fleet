@@ -18,6 +18,11 @@ PROXY_CONF="$PROXY_DIR/proxies.conf"
 ACTIVE_FILE="$PROXY_DIR/active.conf"
 PROXY_LOG="$APP_DIR/logs/proxy-health.log"
 
+if ! [[ "$SELLER_NAME" =~ ^[a-z0-9][a-z0-9_-]{0,31}$ ]]; then
+  echo "ERROR: SELLER_NAME must match ^[a-z0-9][a-z0-9_-]{0,31}$"
+  exit 1
+fi
+
 echo ""
 echo "======================================"
 echo " [proxy-setup] $SELLER_NAME"
@@ -36,6 +41,7 @@ done <<< "$PROXY_LIST"
 
 COUNT="$(grep -c . "$PROXY_CONF" || true)"
 echo "  Saved $COUNT proxy entries."
+chmod 600 "$PROXY_CONF"
 
 # ─── Proxy health-check helper function ──────────────────────
 test_proxy() {
@@ -68,6 +74,47 @@ else
   echo "  WARNING: No alive proxies found. Will retry on next health check."
   : > "$ACTIVE_FILE"
 fi
+chmod 600 "$ACTIVE_FILE"
+
+cat > "/usr/local/bin/${SELLER_NAME}-set-proxy-env.sh" <<'SETPROXY'
+#!/bin/bash
+set -euo pipefail
+
+COMPOSE_FILE="${1:-}"
+P_USER="${2:-}"
+P_PASS="${3:-}"
+P_HOST="${4:-}"
+P_PORT="${5:-}"
+
+if [ -z "$COMPOSE_FILE" ] || [ -z "$P_USER" ] || [ -z "$P_PASS" ] || [ -z "$P_HOST" ] || [ -z "$P_PORT" ]; then
+  echo "Usage: $0 COMPOSE_FILE USER PASS HOST PORT" >&2
+  exit 1
+fi
+
+PROXY_URL="http://${P_USER}:${P_PASS}@${P_HOST}:${P_PORT}"
+ESCAPED_PROXY="$(printf '%s' "$PROXY_URL" | sed -e 's/[\\/&|]/\\&/g')"
+
+if grep -q 'HTTP_PROXY=http://' "$COMPOSE_FILE"; then
+  sed -i "s|HTTP_PROXY=http://[^[:space:]]*|HTTP_PROXY=${ESCAPED_PROXY}|g" "$COMPOSE_FILE"
+  sed -i "s|HTTPS_PROXY=http://[^[:space:]]*|HTTPS_PROXY=${ESCAPED_PROXY}|g" "$COMPOSE_FILE"
+  sed -i "s|http_proxy=http://[^[:space:]]*|http_proxy=${ESCAPED_PROXY}|g" "$COMPOSE_FILE"
+  sed -i "s|https_proxy=http://[^[:space:]]*|https_proxy=${ESCAPED_PROXY}|g" "$COMPOSE_FILE"
+else
+  awk -v proxy="$PROXY_URL" '
+    { print }
+    /CHROME_CLI=/ && !inserted {
+      print "      - HTTP_PROXY=" proxy
+      print "      - HTTPS_PROXY=" proxy
+      print "      - http_proxy=" proxy
+      print "      - https_proxy=" proxy
+      print "      - NO_PROXY=localhost,127.0.0.1"
+      inserted=1
+    }
+  ' "$COMPOSE_FILE" > "${COMPOSE_FILE}.tmp"
+  mv "${COMPOSE_FILE}.tmp" "$COMPOSE_FILE"
+fi
+SETPROXY
+chmod 700 "/usr/local/bin/${SELLER_NAME}-set-proxy-env.sh"
 
 # ─── proxy-status.sh helper ──────────────────────────────────
 cat > "$APP_DIR/proxy-status.sh" <<SH
@@ -145,15 +192,9 @@ A_PASS="\$(echo "\$ACTIVE" | cut -d: -f4)"
 echo "Switching to proxy: \$A_HOST:\$A_PORT"
 echo "\$TS | INFO  | Rotating to \$A_HOST:\$A_PORT" >> "\$LOG"
 
-# Patch docker-compose.yml with new proxy env
-sed -i "s|HTTP_PROXY=http://.*|HTTP_PROXY=http://\${A_USER}:\${A_PASS}@\${A_HOST}:\${A_PORT}|g" \\
-  "\$APP_DIR/docker-compose.yml"
-sed -i "s|HTTPS_PROXY=http://.*|HTTPS_PROXY=http://\${A_USER}:\${A_PASS}@\${A_HOST}:\${A_PORT}|g" \\
-  "\$APP_DIR/docker-compose.yml"
-sed -i "s|http_proxy=http://.*|http_proxy=http://\${A_USER}:\${A_PASS}@\${A_HOST}:\${A_PORT}|g" \\
-  "\$APP_DIR/docker-compose.yml"
-sed -i "s|https_proxy=http://.*|https_proxy=http://\${A_USER}:\${A_PASS}@\${A_HOST}:\${A_PORT}|g" \\
-  "\$APP_DIR/docker-compose.yml"
+# Patch docker-compose.yml with new proxy env (insert lines if missing)
+/usr/local/bin/${SELLER_NAME}-set-proxy-env.sh \
+  "\$APP_DIR/docker-compose.yml" "\$A_USER" "\$A_PASS" "\$A_HOST" "\$A_PORT"
 
 cd "\$APP_DIR"
 docker compose up -d --force-recreate
@@ -173,6 +214,10 @@ ACTIVE_FILE="$ACTIVE_FILE"
 APP_DIR="$APP_DIR"
 LOG="$PROXY_LOG"
 TS="\$(date '+%Y-%m-%d %H:%M:%S')"
+C_HOST=""
+C_PORT=""
+C_USER=""
+C_PASS=""
 
 # If proxy list doesn't exist, nothing to do
 [ ! -f "\$PROXY_CONF" ] && exit 0
@@ -205,7 +250,7 @@ NEW=""
 while IFS=: read -r H P U W; do
   [ -z "\$H" ] && continue
   # Skip the dead one
-  if [ "\$H" = "\$C_HOST" ] && [ "\$P" = "\$C_PORT" ]; then continue; fi
+  if [ -n "\$C_HOST" ] && [ "\$H" = "\$C_HOST" ] && [ "\$P" = "\$C_PORT" ]; then continue; fi
   if curl -fsSL --max-time 5 \\
       --proxy "http://\${U}:\${W}@\${H}:\${P}" \\
       https://api.ipify.org &>/dev/null; then
@@ -240,15 +285,9 @@ N_USER="\$(echo "\$NEW" | cut -d: -f3)"
 N_PASS="\$(echo "\$NEW" | cut -d: -f4)"
 echo "\$TS | SWAP  | Switching to \$N_HOST:\$N_PORT" >> "\$LOG"
 
-# Update docker-compose.yml with new proxy
-sed -i "s|HTTP_PROXY=http://[^[:space:]]*|HTTP_PROXY=http://\${N_USER}:\${N_PASS}@\${N_HOST}:\${N_PORT}|g" \\
-  "\$APP_DIR/docker-compose.yml"
-sed -i "s|HTTPS_PROXY=http://[^[:space:]]*|HTTPS_PROXY=http://\${N_USER}:\${N_PASS}@\${N_HOST}:\${N_PORT}|g" \\
-  "\$APP_DIR/docker-compose.yml"
-sed -i "s|http_proxy=http://[^[:space:]]*|http_proxy=http://\${N_USER}:\${N_PASS}@\${N_HOST}:\${N_PORT}|g" \\
-  "\$APP_DIR/docker-compose.yml"
-sed -i "s|https_proxy=http://[^[:space:]]*|https_proxy=http://\${N_USER}:\${N_PASS}@\${N_HOST}:\${N_PORT}|g" \\
-  "\$APP_DIR/docker-compose.yml"
+# Update docker-compose.yml with new proxy (insert lines if missing)
+/usr/local/bin/${SELLER_NAME}-set-proxy-env.sh \
+  "\$APP_DIR/docker-compose.yml" "\$N_USER" "\$N_PASS" "\$N_HOST" "\$N_PORT"
 
 # Restart container with new proxy
 cd "\$APP_DIR"

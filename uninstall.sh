@@ -10,10 +10,12 @@
 set -euo pipefail
 
 SELLER_NAME=""
+ASSUME_YES="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --seller) SELLER_NAME="$2"; shift 2 ;;
+    --yes|-y) ASSUME_YES="true"; shift ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
@@ -29,6 +31,11 @@ if [[ "$EUID" -ne 0 ]]; then
   exit 1
 fi
 
+if ! [[ "$SELLER_NAME" =~ ^[a-z0-9][a-z0-9_-]{0,31}$ ]]; then
+  echo "ERROR: --seller must match ^[a-z0-9][a-z0-9_-]{0,31}$"
+  exit 1
+fi
+
 APP_DIR="/opt/${SELLER_NAME}-browser"
 CONF_NAME="${SELLER_NAME}-chrome"
 
@@ -38,8 +45,10 @@ echo " Uninstall: $SELLER_NAME"
 echo " App dir  : $APP_DIR"
 echo "======================================"
 echo ""
-read -rp "This will delete all data for '$SELLER_NAME'. Continue? [y/N]: " CONFIRM
-[[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]] && echo "Aborted." && exit 0
+if [[ "$ASSUME_YES" != "true" ]]; then
+  read -rp "This will delete all data for '$SELLER_NAME'. Continue? [y/N]: " CONFIRM
+  [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]] && echo "Aborted." && exit 0
+fi
 
 echo ""
 echo "[1/6] Stopping and removing Docker container..."
@@ -55,6 +64,7 @@ echo "[3/6] Removing maintenance scripts..."
 rm -f "/usr/local/bin/${SELLER_NAME}-health.sh"
 rm -f "/usr/local/bin/${SELLER_NAME}-clear-logs.sh"
 rm -f "/usr/local/bin/${SELLER_NAME}-proxy-health.sh"
+rm -f "/usr/local/bin/${SELLER_NAME}-set-proxy-env.sh"
 
 echo "[4/6] Removing crontab entries..."
 CRON_TMP="/tmp/${SELLER_NAME}_uninstall_cron"

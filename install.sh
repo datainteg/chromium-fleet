@@ -37,6 +37,33 @@ log()  { echo -e "${GREEN}[✓]${RESET} $*"; }
 info() { echo -e "${CYAN}[i]${RESET} $*"; }
 err()  { echo -e "${RED}[✗]${RESET} $*" >&2; }
 
+is_valid_seller_name() {
+  [[ "$1" =~ ^[a-z0-9][a-z0-9_-]{0,31}$ ]]
+}
+
+is_valid_port() {
+  [[ "$1" =~ ^[0-9]+$ ]] && (( "$1" >= 1 && "$1" <= 65535 ))
+}
+
+is_valid_proxy() {
+  local proxy="$1" host port user pass extra
+  IFS=: read -r host port user pass extra <<< "$proxy"
+  [[ -n "${host:-}" && -n "${port:-}" && -n "${user:-}" && -n "${pass:-}" && -z "${extra:-}" ]] || return 1
+  [[ "$port" =~ ^[0-9]+$ ]] && (( port >= 1 && port <= 65535 ))
+}
+
+download_script() {
+  local out="$1"
+  shift
+  local rel
+  for rel in "$@"; do
+    if curl -fsSL "$REPO_RAW/$rel" -o "$out"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 # ─── Usage ───────────────────────────────────────────────────
 usage() {
   echo ""
@@ -70,17 +97,17 @@ usage() {
 # ─── Argument parser ─────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --seller)    SELLER_NAME="$2"; shift 2 ;;
-    --port)      CHROME_PORT="$2"; shift 2 ;;
-    --user)      CHROME_USER="$2"; shift 2 ;;
-    --pass)      CHROME_PASS="$2"; shift 2 ;;
-    --subdomain) SUBDOMAIN="$2";   shift 2 ;;
-    --tz)        TZ_NAME="$2";     shift 2 ;;
-    --mem)       MEM_LIMIT="$2";   shift 2 ;;
-    --cpu)       CPU_LIMIT="$2";   shift 2 ;;
-    --shm)       SHM_SIZE="$2";    shift 2 ;;
-    --swap)      SWAP_SIZE="$2";   shift 2 ;;
-    --proxy)     PROXIES+=("$2");  shift 2 ;;
+    --seller)    [[ $# -lt 2 ]] && { err "Missing value for --seller"; usage; exit 1; }; SELLER_NAME="$2"; shift 2 ;;
+    --port)      [[ $# -lt 2 ]] && { err "Missing value for --port"; usage; exit 1; }; CHROME_PORT="$2"; shift 2 ;;
+    --user)      [[ $# -lt 2 ]] && { err "Missing value for --user"; usage; exit 1; }; CHROME_USER="$2"; shift 2 ;;
+    --pass)      [[ $# -lt 2 ]] && { err "Missing value for --pass"; usage; exit 1; }; CHROME_PASS="$2"; shift 2 ;;
+    --subdomain) [[ $# -lt 2 ]] && { err "Missing value for --subdomain"; usage; exit 1; }; SUBDOMAIN="$2"; shift 2 ;;
+    --tz)        [[ $# -lt 2 ]] && { err "Missing value for --tz"; usage; exit 1; }; TZ_NAME="$2"; shift 2 ;;
+    --mem)       [[ $# -lt 2 ]] && { err "Missing value for --mem"; usage; exit 1; }; MEM_LIMIT="$2"; shift 2 ;;
+    --cpu)       [[ $# -lt 2 ]] && { err "Missing value for --cpu"; usage; exit 1; }; CPU_LIMIT="$2"; shift 2 ;;
+    --shm)       [[ $# -lt 2 ]] && { err "Missing value for --shm"; usage; exit 1; }; SHM_SIZE="$2"; shift 2 ;;
+    --swap)      [[ $# -lt 2 ]] && { err "Missing value for --swap"; usage; exit 1; }; SWAP_SIZE="$2"; shift 2 ;;
+    --proxy)     [[ $# -lt 2 ]] && { err "Missing value for --proxy"; usage; exit 1; }; PROXIES+=("$2"); shift 2 ;;
     --help|-h)   usage; exit 0 ;;
     *) err "Unknown option: $1"; usage; exit 1 ;;
   esac
@@ -90,8 +117,13 @@ done
 ERRORS=()
 [[ -z "$CHROME_PASS" ]] && ERRORS+=("--pass is required")
 [[ -z "$SUBDOMAIN"   ]] && ERRORS+=("--subdomain is required")
+is_valid_seller_name "$SELLER_NAME" || ERRORS+=("--seller must match: ^[a-z0-9][a-z0-9_-]{0,31}$")
+is_valid_port "$CHROME_PORT" || ERRORS+=("--port must be a number between 1 and 65535")
+for proxy in "${PROXIES[@]}"; do
+  is_valid_proxy "$proxy" || ERRORS+=("Invalid --proxy value '$proxy' (expected host:port:user:pass with numeric port)")
+done
 if [[ ${#ERRORS[@]} -gt 0 ]]; then
-  err "Missing required parameters:"
+  err "Invalid or missing parameters:"
   for e in "${ERRORS[@]}"; do echo "    • $e"; done
   usage; exit 1
 fi
@@ -130,9 +162,12 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 info "Downloading setup scripts..."
-curl -fsSL "$REPO_RAW/chrome-setup/setup.sh" -o "$TMP_DIR/setup.sh"
-curl -fsSL "$REPO_RAW/nginx-setup/nginx.sh"  -o "$TMP_DIR/nginx.sh"
-curl -fsSL "$REPO_RAW/proxy-setup/proxy.sh"  -o "$TMP_DIR/proxy.sh"
+download_script "$TMP_DIR/setup.sh" "setup.sh" "chrome-setup/setup.sh" \
+  || { err "Unable to download setup.sh from repository."; exit 1; }
+download_script "$TMP_DIR/nginx.sh" "nginx.sh" "nginx-setup/nginx.sh" \
+  || { err "Unable to download nginx.sh from repository."; exit 1; }
+download_script "$TMP_DIR/proxy.sh" "proxy.sh" "proxy-setup/proxy.sh" \
+  || { err "Unable to download proxy.sh from repository."; exit 1; }
 chmod +x "$TMP_DIR/setup.sh" "$TMP_DIR/nginx.sh" "$TMP_DIR/proxy.sh"
 
 # Build PROXY_LIST env var (newline-separated)
@@ -166,7 +201,7 @@ echo -e "${BOLD}${GREEN}╚═════════════════�
 echo ""
 echo -e "  ${BOLD}Chromium URL  :${RESET} http://$SUBDOMAIN"
 echo -e "  ${BOLD}Direct access :${RESET} http://$(hostname -I | awk '{print $1}'):$CHROME_PORT"
-echo -e "  ${BOLD}Login         :${RESET} $CHROME_USER / $CHROME_PASS"
+echo -e "  ${BOLD}Login         :${RESET} $CHROME_USER / [hidden]"
 echo -e "  ${BOLD}App dir       :${RESET} /opt/${SELLER_NAME}-browser"
 echo -e "  ${BOLD}Session state :${RESET} /opt/${SELLER_NAME}-browser/profile  (always preserved)"
 if [[ ${#PROXIES[@]} -gt 0 ]]; then

@@ -6,20 +6,16 @@ Generic, multi-instance Chromium browser VMs — managed via Docker, fronted by 
 
 ## Repository Structure
 
-```
+```text
 chromium-fleet/
 ├── install.sh                  ← one-command entry point (curl this)
+├── setup.sh                    ← Docker + swap + container + cron
+├── nginx.sh                    ← Nginx + Basic Auth + SSL
+├── proxy.sh                    ← proxy management + auto-failover
 ├── uninstall.sh                ← per-seller clean removal
-├── chrome-setup/
-│   └── setup.sh                ← Docker + swap + container + cron
-├── nginx-setup/
-│   └── nginx.sh                ← Nginx + Basic Auth + SSL
-├── proxy-setup/
-│   └── proxy.sh                ← proxy management + auto-failover
-└── scripts/
-    ├── list-sellers.sh         ← list all instances on this VM
-    ├── update-all.sh           ← pull latest image for all instances
-    └── health-all.sh           ← system + container health overview
+├── list-sellers.sh             ← list all instances on this VM
+├── update-all.sh               ← pull latest image for all instances
+└── health-all.sh               ← system + container health overview
 ```
 
 ---
@@ -141,21 +137,21 @@ Proxy support is **opt-in** — only active when `--proxy` is passed.
 
 ## What Gets Installed
 
-### Chrome VM (`chrome-setup/setup.sh`)
+### Chrome VM (`setup.sh`)
 - Docker + Docker Compose
 - Swap file
 - `lscr.io/linuxserver/chromium` container
 - Helper scripts in `/opt/{seller}-browser/`
-- Cron: health check (5 min), log cleanup (daily 06:15 IST), reboot cleanup, weekly update
+- Cron: health check (5 min), log cleanup (daily 05:45 IST), reboot cleanup, weekly update
 
-### Nginx (`nginx-setup/nginx.sh`)
+### Nginx (`nginx.sh`)
 - Reverse proxy → `localhost:{PORT}`
 - WebSocket pass-through (required for KasmVNC/noVNC)
 - Per-seller Basic Auth via htpasswd
 - `/healthz` endpoint (no auth) for uptime monitoring
 - Auto SSL via Certbot if DNS already points here
 
-### Proxy (`proxy-setup/proxy.sh`) *(optional)*
+### Proxy (`proxy.sh`) *(optional)*
 - Saves all proxies to `proxies.conf`
 - Tests each proxy and sets the first alive one as active
 - Generates `proxy-status.sh` and `proxy-rotate.sh`
@@ -169,9 +165,9 @@ Proxy support is **opt-in** — only active when `--proxy` is passed.
 |---|---|
 | Every 5 min | Container health check — restart if down |
 | Every 10 min | Proxy health check + auto-failover (only if proxy enabled) |
-| Daily 06:15 AM IST | Clear Docker logs, journal, Nginx logs, APT cache |
+| Daily 05:45 AM IST | Clear container log, journal, Nginx logs, APT cache |
 | On reboot (+2 min) | Log cleanup |
-| Sunday 02:00 AM IST | Pull latest image + recreate container |
+| Monday 02:30 AM IST | Pull latest image + recreate container |
 
 ---
 
@@ -192,13 +188,40 @@ Located in `/opt/{seller}-browser/`:
 
 ## Fleet-wide Scripts
 
-Located in `scripts/` (or install globally):
+Located in the repository root (or install globally):
 
 ```bash
-bash scripts/list-sellers.sh    # all sellers + status
-bash scripts/health-all.sh      # health + resource overview
-bash scripts/update-all.sh      # update all seller containers
+bash list-sellers.sh    # all sellers + status
+bash health-all.sh      # health + resource overview
+bash update-all.sh      # update all seller containers
 ```
+
+---
+
+## API For Frontend Integration
+
+An optional REST API is available in [`api/`](./api) to control sellers from frontend apps.
+
+Quick start:
+
+```bash
+cd api
+npm install
+cp .env.example .env
+npm start
+```
+
+Key endpoints:
+
+- `GET /api/v1/monitor/overview`
+- `GET /api/v1/monitor/vm`
+- `GET /api/v1/monitor/fleet`
+- `GET /api/v1/sellers`
+- `POST /api/v1/sellers`
+- `POST /api/v1/sellers/:seller/actions/:action`
+- `DELETE /api/v1/sellers/:seller`
+
+See full usage in [`api/README.md`](./api/README.md).
 
 ---
 

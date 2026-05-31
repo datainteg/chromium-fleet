@@ -31,7 +31,8 @@ printf "  %-15s %-12s %-20s %-10s\n" "──────────────
 for NAME in "${SELLERS[@]}"; do
   CONTAINER="${NAME}-chrome"
   APP_DIR="/opt/${NAME}-browser"
-  PORT="$(grep -oP '(?<=- ")[\d]+(?=:3000")' "$APP_DIR/docker-compose.yml" 2>/dev/null || echo '?')"
+  PORT="$(awk -F'"' '/- "[0-9]+:3000"/ { split($2,a,":"); print a[1]; exit }' "$APP_DIR/docker-compose.yml" 2>/dev/null)"
+  [ -z "$PORT" ] && PORT="?"
   STATUS="$(docker ps --filter "name=${CONTAINER}" --format '{{.Status}}' 2>/dev/null || echo 'unknown')"
   [ -z "$STATUS" ] && STATUS="stopped"
   printf "  %-15s %-12s %-20s %-10s\n" "$NAME" "$CONTAINER" "$STATUS" "$PORT"

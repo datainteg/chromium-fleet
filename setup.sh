@@ -66,6 +66,16 @@ SHM_SIZE="${SHM_SIZE:-2gb}"
 SWAP_SIZE="${SWAP_SIZE:-4G}"
 PROXY_LIST="${PROXY_LIST:-}"
 
+if ! [[ "$SELLER_NAME" =~ ^[a-z0-9][a-z0-9_-]{0,31}$ ]]; then
+  echo "ERROR: SELLER_NAME must match ^[a-z0-9][a-z0-9_-]{0,31}$"
+  exit 1
+fi
+
+if ! [[ "$CHROME_PORT" =~ ^[0-9]+$ ]] || (( CHROME_PORT < 1 || CHROME_PORT > 65535 )); then
+  echo "ERROR: CHROME_PORT must be between 1 and 65535"
+  exit 1
+fi
+
 echo ""
 echo "======================================"
 echo " [chrome-setup] $SELLER_NAME"
@@ -379,17 +389,16 @@ cat > "/usr/local/bin/${SELLER_NAME}-clear-logs.sh" <<CLEANUP
 #!/bin/bash
 LOG="$APP_DIR/logs/cleanup.log"
 TS="\$(date '+%Y-%m-%d %H:%M:%S')"
+CONTAINER="${SELLER_NAME}-chrome"
 echo "\$TS | START | Log cleanup..." >> "\$LOG"
 
-# Truncate Docker JSON log files
-find /var/lib/docker/containers/ -type f -name "*.log" \
-  -exec truncate -s 0 {} \; 2>/dev/null || true
-
-# Remove dangling Docker resources (never touches running containers or images)
-docker container prune -f >/dev/null 2>&1 || true
-docker image     prune -f >/dev/null 2>&1 || true
-docker builder   prune -f >/dev/null 2>&1 || true
-docker volume    prune -f >/dev/null 2>&1 || true
+# Truncate only this seller's container log (avoid impacting other workloads)
+if CID="\$(docker ps -aq --filter "name=^\${CONTAINER}\$" | head -n1)" && [ -n "\$CID" ]; then
+  LOG_PATH="\$(docker inspect --format='{{.LogPath}}' "\$CID" 2>/dev/null || true)"
+  if [ -n "\$LOG_PATH" ] && [ -f "\$LOG_PATH" ]; then
+    truncate -s 0 "\$LOG_PATH" 2>/dev/null || true
+  fi
+fi
 
 # Trim systemd journal
 journalctl --vacuum-time=2d >/dev/null 2>&1 || true
