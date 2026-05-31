@@ -203,6 +203,21 @@ chromium-fleet/
 `- api/
 ```
 
+## Cron Jobs and VM Schedule
+
+Each installed seller automatically creates cron jobs (visible via `crontab -l -u root`):
+
+| Schedule | Job |
+|---|---|
+| `@reboot` | Resume Chrome container 90s after VM boot |
+| `*/5 * * * *` | Container health check |
+| `30 1 UTC daily` | Log cleanup |
+| `45 1 UTC daily` | `docker system prune -f` |
+| `02 2 UTC daily` | Profile backup (tar.gz, keeps last 3) |
+| `02 2 UTC Sun` | Weekly image update + recreate |
+
+To edit cron: `crontab -e -u root`
+
 ## Requirements
 - Debian 12 or Ubuntu 22.04/24.04 (64-bit)
 - Root access

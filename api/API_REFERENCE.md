@@ -162,7 +162,8 @@ Public health check. No auth required.
   "service": "chromium-fleet-api",
   "version": "0.1.0",
   "uptimeSeconds": 3742,
-  "authEnabled": true
+  "authEnabled": true,
+  "dockerAvailable": true
 }
 ```
 
@@ -436,6 +437,15 @@ data: {"timestamp":"2025-01-01T07:00:01.000Z","error":"monitor stream failed"}
 - Max 2MB per individual event
 - Max 100MB per connection per hour (stream closes with error event)
 
+**Browser EventSource auth:**
+Standard `EventSource` cannot set `Authorization` headers. Use `?token=<accessToken>` as a fallback on SSE endpoints:
+```javascript
+const es = new EventSource(
+  `https://chrome1.yourdomain.com/api/v1/monitor/stream?token=${accessToken}`
+);
+```
+Token appears in Nginx access logs when using this method. Use only in trusted internal environments. For production, use an SSE polyfill with header support (`@microsoft/fetch-event-source`) or a backend-for-frontend proxy.
+
 **curl**
 ```bash
 curl -N "https://chrome1.yourdomain.com/api/v1/monitor/stream?intervalMs=15000" \
@@ -554,6 +564,39 @@ Single seller detail.
 ```bash
 curl -s https://chrome1.yourdomain.com/api/v1/sellers/qa-team-1 \
   -H "Authorization: Bearer $TOKEN" | jq .
+```
+
+---
+
+### GET /api/v1/sellers/:seller/config
+
+Export seller configuration: port, subdomain (parsed from Nginx config), and proxy pool summary (passwords masked). Useful for settings pages and VM migration.
+
+**Success `200`**
+```json
+{
+  "seller": "qa-team-1",
+  "appDir": "/opt/qa-team-1-browser",
+  "containerName": "qa-team-1-chrome",
+  "port": 3000,
+  "subdomain": "chrome1.yourdomain.com",
+  "proxyCount": 2,
+  "proxies": [
+    { "index": 0, "host": "1.2.3.4", "port": "8080", "user": "proxyuser1", "active": true },
+    { "index": 1, "host": "5.6.7.8", "port": "8080", "user": "proxyuser2", "active": false }
+  ],
+  "paths": {
+    "composeFile": "/opt/qa-team-1-browser/docker-compose.yml",
+    "proxyConf": "/opt/qa-team-1-browser/proxy/proxies.conf",
+    "nginxConfig": "/etc/nginx/sites-available/qa-team-1-chrome"
+  }
+}
+```
+
+**curl**
+```bash
+curl -s https://chrome1.yourdomain.com/api/v1/sellers/qa-team-1/config \
+  -H "Authorization: Bearer $TOKEN" | jq '{seller, port, subdomain, proxyCount}'
 ```
 
 ---
@@ -1160,6 +1203,51 @@ curl -s -X POST \
 ```
 
 **Warning:** Current Chrome session is replaced. Previous profile is saved as `profile-pre-restore-*` in the app directory — not deleted automatically.
+
+---
+
+### POST /api/v1/webhook/test
+
+Fire a test payload to the configured `WEBHOOK_URL`. Use this to verify your Discord/Slack webhook is working after setting it in `api/.env`.
+
+Returns `400` if `WEBHOOK_URL` is not set.
+
+**Request**
+```http
+POST /api/v1/webhook/test
+Authorization: Bearer <accessToken>
+```
+
+No body required.
+
+**Success `200`**
+```json
+{
+  "sent": true,
+  "webhookUrl": "https://discord.com/api/webhooks/123456/***"
+}
+```
+
+**Errors**
+```json
+{ "error": "WEBHOOK_URL is not configured in api/.env" }  // 400
+```
+
+**Payload sent to webhook:**
+```json
+{
+  "service": "chromium-fleet",
+  "event": "webhook_test",
+  "message": "Test webhook from chromium-fleet. Your webhook is working correctly.",
+  "timestamp": "2025-01-01T07:00:00.000Z"
+}
+```
+
+**curl**
+```bash
+curl -s -X POST https://chrome1.yourdomain.com/api/v1/webhook/test \
+  -H "Authorization: Bearer $TOKEN" | jq .
+```
 
 ---
 

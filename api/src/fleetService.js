@@ -793,6 +793,41 @@ async function restoreSellerBackup(seller, filename) {
   return { seller, restored: filename, previousProfileSaved: safetyName };
 }
 
+async function getSellerConfig(seller) {
+  if (!isValidSellerName(seller)) {
+    throw Object.assign(new Error("Invalid seller name"), { statusCode: 400 });
+  }
+  const sellerPaths = buildSellerPaths(seller);
+  const composeText = await readTextIfExists(sellerPaths.composeFile);
+  if (!composeText) {
+    throw Object.assign(new Error("Seller not found"), { statusCode: 404 });
+  }
+
+  const nginxConfig = await readTextIfExists(sellerPaths.nginxConfigFile);
+  let subdomain = null;
+  if (nginxConfig) {
+    const match = nginxConfig.match(/server_name\s+([^\s;]+)/);
+    subdomain = match ? match[1] : null;
+  }
+
+  const proxySummary = await listProxies(seller);
+
+  return {
+    seller,
+    appDir: sellerPaths.appDir,
+    containerName: sellerPaths.containerName,
+    port: parseComposePort(composeText),
+    subdomain,
+    proxyCount: proxySummary.count,
+    proxies: proxySummary.proxies,
+    paths: {
+      composeFile: sellerPaths.composeFile,
+      proxyConf: sellerPaths.proxyConfFile,
+      nginxConfig: sellerPaths.nginxConfigFile
+    }
+  };
+}
+
 module.exports = {
   listSellers,
   getSellerSummary,
@@ -811,5 +846,6 @@ module.exports = {
   deleteSellerExtension,
   getSellerBackups,
   restoreSellerBackup,
+  getSellerConfig,
   SELLER_ACTIONS
 };

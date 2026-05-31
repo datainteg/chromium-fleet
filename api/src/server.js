@@ -26,7 +26,8 @@ const {
   getSellerExtensions,
   deleteSellerExtension,
   getSellerBackups,
-  restoreSellerBackup
+  restoreSellerBackup,
+  getSellerConfig
 } = require("./fleetService");
 const { initSessions, getSessions, getSession, setSession, deleteSession } = require("./sessions");
 const { recordEvent, getEvents } = require("./events");
@@ -37,6 +38,7 @@ const {
   getMonitoringOverview,
   getVmUsage
 } = require("./monitoringService");
+const { runCommand } = require("./exec");
 
 const app = express();
 
@@ -136,6 +138,17 @@ function readBearerToken(req) {
   if (typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
     const token = authHeader.slice("Bearer ".length).trim();
     return token || "";
+  }
+  // Query-param fallback for browser EventSource which cannot set headers.
+  // Only accepted on SSE streaming endpoints to limit token-in-URL exposure.
+  const isSseEndpoint =
+    req.path === "/api/v1/monitor/stream" ||
+    req.path === "/api/v1/status/live";
+  if (isSseEndpoint) {
+    const queryToken = req.query.token;
+    if (typeof queryToken === "string" && queryToken.trim() !== "") {
+      return queryToken.trim();
+    }
   }
   return "";
 }
@@ -353,15 +366,31 @@ function parseIntervalMs(value, fallbackMs = 5000) {
   return parsed;
 }
 
-app.get("/healthz", (req, res) => {
-  res.json({
-    ok: true,
-    service: "chromium-fleet-api",
-    version: packageMeta.version,
-    uptimeSeconds: Math.floor(process.uptime()),
-    authEnabled: !config.disableAuth
-  });
-});
+app.get(
+  "/healthz",
+  asyncHandler(async (req, res) => {
+    let dockerAvailable = false;
+    try {
+      const result = await runCommand(
+        "docker",
+        ["info", "--format", "{{.ServerVersion}}"],
+        { allowFailure: true, timeoutMs: 5_000 }
+      );
+      dockerAvailable = result.code === 0;
+    } catch {
+      dockerAvailable = false;
+    }
+
+    res.json({
+      ok: true,
+      service: "chromium-fleet-api",
+      version: packageMeta.version,
+      uptimeSeconds: Math.floor(process.uptime()),
+      authEnabled: !config.disableAuth,
+      dockerAvailable
+    });
+  })
+);
 
 app.post("/api/v1/auth/login", authLimiter, (req, res) => {
   if (config.disableAuth) {
@@ -824,6 +853,33 @@ app.post(
   })
 );
 
+// ── Webhook test ───────────────────────────────────────────────────────────
+app.post(
+  "/api/v1/webhook/test",
+  asyncHandler(async (req, res) => {
+    if (!config.webhookUrl) {
+      res.status(400).json({ error: "WEBHOOK_URL is not configured in api/.env" });
+      return;
+    }
+    await sendWebhook(config.webhookUrl, {
+      event: "webhook_test",
+      message: "Test webhook from chromium-fleet. Your webhook is working correctly."
+    });
+    // Mask the token portion of the URL in the response
+    const maskedUrl = config.webhookUrl.replace(/\/[^/]{6,}$/, "/***");
+    res.json({ sent: true, webhookUrl: maskedUrl });
+  })
+);
+
+// ── Seller config export ───────────────────────────────────────────────────
+app.get(
+  "/api/v1/sellers/:seller/config",
+  asyncHandler(async (req, res) => {
+    const result = await getSellerConfig(req.params.seller);
+    res.json(result);
+  })
+);
+
 // ── Proxy pool management ──────────────────────────────────────────────────
 // These endpoints are no-ops for sellers without proxies (return empty list).
 // Proxy is fully optional — sellers without a proxies.conf work normally.
@@ -942,6 +998,9 @@ async function start() {
   });
 
   startStateWatcher();
+
+  // Hourly cleanup of expired refresh token sessions
+  setInterval(cleanupRefreshSessions, 60 * 60 * 1000);
 
   process.on("SIGTERM", () => {
     httpServer.close(() => process.exit(0));
