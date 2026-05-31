@@ -79,15 +79,16 @@ curl -fsSL https://raw.githubusercontent.com/datainteg/chromium-fleet/main/insta
 | `--pass` | - | Yes | Nginx basic auth password |
 | `--subdomain` | - | Yes | Full domain, e.g. `chrome1.example.com` |
 | `--tz` | `Asia/Kolkata` | No | Container timezone |
-| `--mem` | `3g` | No | Docker memory limit |
-| `--cpu` | `1.5` | No | Docker CPU limit |
-| `--shm` | `2gb` | No | `/dev/shm` size |
-| `--swap` | `4G` | No | Swap file size |
+| `--mem` | `2g` | No | Docker memory limit (4GB-VM optimized default) |
+| `--cpu` | `1.0` | No | Docker CPU limit |
+| `--shm` | `1gb` | No | `/dev/shm` size |
+| `--swap` | `2G` | No | Swap file size |
 | `--api-port` | `8787` | No | Local API upstream port for Nginx `/api` proxy |
 | `--proxy` | - | No | `host:port:user:pass` (repeatable) |
 
 ## API For Frontend Integration
 API docs: [`api/README.md`](./api/README.md)
+Boot-time API service installer: `api/install-service.sh`
 
 Key endpoints:
 - `POST /api/v1/auth/login` (username/password -> token pair)
@@ -96,13 +97,18 @@ Key endpoints:
 - `GET /api/v1/monitor/overview`
 - `GET /api/v1/monitor/vm`
 - `GET /api/v1/monitor/fleet`
+- `GET /api/v1/monitor/stream` (live SSE status stream)
+- `GET /api/v1/status/live` (alias for live SSE stream)
 - `GET /api/v1/sellers`
 - `POST /api/v1/sellers`
 - `POST /api/v1/sellers/:seller/actions/:action`
+- `POST /api/v1/sellers/:seller/resume`
+- `POST /api/v1/sellers/resume-all`
 - `DELETE /api/v1/sellers/:seller`
 
 If Nginx setup uses default config, call API from:
 - `https://<your-subdomain>/api/...`
+ - API calls require Nginx basic auth and API JWT auth by default.
 
 ## Repository Structure
 ```text

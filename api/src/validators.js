@@ -53,9 +53,23 @@ function isValidProxy(value) {
   return isValidPort(port);
 }
 
+function isValidResourceSize(value) {
+  if (typeof value !== "string") {
+    return false;
+  }
+  return /^[1-9][0-9]*([kKmMgG])([bB])?$/.test(value.trim());
+}
+
+function isValidCpuLimit(value) {
+  const n = Number.parseFloat(String(value));
+  return Number.isFinite(n) && n > 0 && n <= 8;
+}
+
 module.exports = {
   isValidSellerName,
   isValidPort,
   isValidSubdomain,
-  isValidProxy
+  isValidProxy,
+  isValidResourceSize,
+  isValidCpuLimit
 };

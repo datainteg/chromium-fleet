@@ -32,6 +32,16 @@ npm start
 
 Default: `http://0.0.0.0:8787`
 
+## Auto-start On VM Boot
+For daily stop/start servers, install API as a systemd service:
+
+```bash
+cd api
+sudo bash install-service.sh
+```
+
+This enables restart-on-failure and boot-time auto-start with a 256MB Node heap cap.
+
 ## Auth Flow (Recommended)
 1. Login with username/password:
 ```http
@@ -79,7 +89,8 @@ Content-Type: application/json
 - Enable `ALLOW_API_KEY_AUTH=true`
 - Pass `x-api-key: <API_KEY>`
 
-`/healthz` is public. `/api/*` requires auth unless `DISABLE_AUTH=true`.
+`/healthz` is public. `/api/*` requires API auth unless `DISABLE_AUTH=true`.
+If you call API through Nginx, default setup also enforces Nginx basic auth.
 
 ## Core Endpoints
 - `GET /healthz`
@@ -91,11 +102,28 @@ Content-Type: application/json
 - `GET /api/v1/monitor/vm`
 - `GET /api/v1/monitor/fleet`
 - `GET /api/v1/monitor/cluster`
+- `GET /api/v1/monitor/stream` (SSE live monitoring)
+- `GET /api/v1/status/live` (alias of monitor stream)
 - `GET /api/v1/sellers`
 - `GET /api/v1/sellers/:seller`
 - `POST /api/v1/sellers`
 - `POST /api/v1/sellers/:seller/actions/:action`
+- `POST /api/v1/sellers/:seller/resume`
+- `POST /api/v1/sellers/resume-all`
 - `DELETE /api/v1/sellers/:seller`
+
+## Live Status Stream (SSE)
+Use this for continuous frontend dashboard updates:
+
+```http
+GET /api/v1/monitor/stream?intervalMs=15000
+Authorization: Bearer <accessToken>
+```
+
+Notes:
+- `intervalMs` is optional and clamped to server-safe bounds.
+- Stream sends `ready`, periodic `overview`, and `error` events.
+- Idle keepalive comments are emitted to keep reverse-proxy connections alive.
 
 ## Example Seller Create Payload
 ```json
@@ -106,10 +134,10 @@ Content-Type: application/json
   "port": 3000,
   "user": "admin",
   "tz": "Asia/Kolkata",
-  "mem": "3g",
-  "cpu": "1.5",
-  "shm": "2gb",
-  "swap": "4G",
+  "mem": "2g",
+  "cpu": "1.0",
+  "shm": "1gb",
+  "swap": "2G",
   "proxies": [
     "1.2.3.4:8080:user1:pass1",
     "5.6.7.8:8080:user2:pass2"
@@ -120,6 +148,7 @@ Content-Type: application/json
 ## Notes
 - Run API with permission to execute Docker and fleet scripts (typically root on VM).
 - Command output is returned in API responses as `result.stdout` / `result.stderr`.
+- For low-RAM VMs, tune `.env` monitor values: `MONITOR_CACHE_TTL_MS`, `MONITOR_STREAM_*`.
 
 ## Support
 - Author: `Datainteg`

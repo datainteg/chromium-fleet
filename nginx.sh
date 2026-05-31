@@ -132,17 +132,47 @@ server {
         proxy_buffers       4 256k;
     }
 
-    # API proxy (JWT auth handled by API service)
-    location /api/ {
-        auth_basic off;
+    # Live monitoring stream (SSE) with long-lived connection settings
+    location = /api/v1/monitor/stream {
         proxy_pass          http://127.0.0.1:${API_PORT};
         proxy_http_version  1.1;
         proxy_set_header    Host              \$host;
         proxy_set_header    X-Real-IP         \$remote_addr;
         proxy_set_header    X-Forwarded-For   \$proxy_add_x_forwarded_for;
         proxy_set_header    X-Forwarded-Proto \$scheme;
-        proxy_read_timeout    60s;
-        proxy_send_timeout    60s;
+        proxy_set_header    Connection        "";
+        proxy_buffering     off;
+        proxy_cache         off;
+        proxy_read_timeout    3600s;
+        proxy_send_timeout    3600s;
+        proxy_connect_timeout  30s;
+    }
+
+    location = /api/v1/status/live {
+        proxy_pass          http://127.0.0.1:${API_PORT};
+        proxy_http_version  1.1;
+        proxy_set_header    Host              \$host;
+        proxy_set_header    X-Real-IP         \$remote_addr;
+        proxy_set_header    X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header    X-Forwarded-Proto \$scheme;
+        proxy_set_header    Connection        "";
+        proxy_buffering     off;
+        proxy_cache         off;
+        proxy_read_timeout    3600s;
+        proxy_send_timeout    3600s;
+        proxy_connect_timeout  30s;
+    }
+
+    # API proxy (protected by both Nginx basic auth and API JWT auth)
+    location /api/ {
+        proxy_pass          http://127.0.0.1:${API_PORT};
+        proxy_http_version  1.1;
+        proxy_set_header    Host              \$host;
+        proxy_set_header    X-Real-IP         \$remote_addr;
+        proxy_set_header    X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header    X-Forwarded-Proto \$scheme;
+        proxy_read_timeout    120s;
+        proxy_send_timeout    120s;
         proxy_connect_timeout 30s;
     }
 

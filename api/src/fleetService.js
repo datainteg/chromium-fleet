@@ -3,7 +3,14 @@ const path = require("node:path");
 
 const { config } = require("./config");
 const { runCommand } = require("./exec");
-const { isValidPort, isValidProxy, isValidSellerName, isValidSubdomain } = require("./validators");
+const {
+  isValidCpuLimit,
+  isValidPort,
+  isValidProxy,
+  isValidResourceSize,
+  isValidSellerName,
+  isValidSubdomain
+} = require("./validators");
 
 const INSTALL_SCRIPT = path.join(config.fleetRoot, "install.sh");
 const UNINSTALL_SCRIPT = path.join(config.fleetRoot, "uninstall.sh");
@@ -207,6 +214,18 @@ function validateInstallPayload(payload) {
   if (payload.port !== undefined && !isValidPort(payload.port)) {
     throw Object.assign(new Error("port must be between 1 and 65535"), { statusCode: 400 });
   }
+  if (payload.mem !== undefined && !isValidResourceSize(payload.mem)) {
+    throw Object.assign(new Error("mem must look like 2g, 1536m, or 1gb"), { statusCode: 400 });
+  }
+  if (payload.shm !== undefined && !isValidResourceSize(payload.shm)) {
+    throw Object.assign(new Error("shm must look like 1gb or 512m"), { statusCode: 400 });
+  }
+  if (payload.swap !== undefined && !isValidResourceSize(payload.swap)) {
+    throw Object.assign(new Error("swap must look like 2G or 4096M"), { statusCode: 400 });
+  }
+  if (payload.cpu !== undefined && !isValidCpuLimit(payload.cpu)) {
+    throw Object.assign(new Error("cpu must be a positive number up to 8"), { statusCode: 400 });
+  }
 
   const proxies = Array.isArray(payload.proxies) ? payload.proxies : [];
   for (const proxy of proxies) {
@@ -329,11 +348,85 @@ async function runSellerAction(seller, action) {
   return { seller, action, result };
 }
 
+async function resumeSeller(seller) {
+  const before = await getSellerSummary(seller);
+  if (before.running) {
+    return {
+      seller,
+      resumed: false,
+      reason: "already-running",
+      before,
+      after: before
+    };
+  }
+
+  const actionResult = await runSellerAction(seller, "start");
+  const after = await getSellerSummary(seller);
+  return {
+    seller,
+    resumed: true,
+    reason: "started",
+    before,
+    after,
+    result: actionResult.result
+  };
+}
+
+async function resumeAllSellers() {
+  const sellers = await listSellers();
+  const results = [];
+
+  for (const seller of sellers) {
+    try {
+      if (seller.running) {
+        results.push({
+          seller: seller.seller,
+          resumed: false,
+          reason: "already-running",
+          before: seller,
+          after: seller
+        });
+        continue;
+      }
+
+      const actionResult = await runSellerAction(seller.seller, "start");
+      const after = await getSellerSummary(seller.seller);
+      results.push({
+        seller: seller.seller,
+        resumed: true,
+        reason: "started",
+        before: seller,
+        after,
+        result: actionResult.result
+      });
+    } catch (error) {
+      results.push({
+        seller: seller.seller,
+        resumed: false,
+        reason: "failed",
+        error: error.message || "failed to resume seller"
+      });
+    }
+  }
+
+  const resumedCount = results.filter((item) => item.resumed).length;
+  const failedCount = results.filter((item) => item.reason === "failed").length;
+
+  return {
+    total: results.length,
+    resumedCount,
+    failedCount,
+    results
+  };
+}
+
 module.exports = {
   listSellers,
   getSellerSummary,
   createSeller,
   removeSeller,
   runSellerAction,
+  resumeSeller,
+  resumeAllSellers,
   SELLER_ACTIONS
 };

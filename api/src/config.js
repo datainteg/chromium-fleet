@@ -24,6 +24,11 @@ function parsePositiveInt(value, fallback) {
   return fallback;
 }
 
+function clampPositiveInt(value, min, max, fallback) {
+  const parsed = parsePositiveInt(value, fallback);
+  return Math.max(min, Math.min(max, parsed));
+}
+
 function parseOrigins(value) {
   if (typeof value !== "string" || value.trim() === "") {
     return [];
@@ -67,7 +72,32 @@ const config = {
   commandTimeoutMs: parsePositiveInt(process.env.COMMAND_TIMEOUT_MS, 15 * 60 * 1000),
   sellerRoot: process.env.SELLER_ROOT || "/opt",
   fleetRoot: path.resolve(__dirname, "..", ".."),
-  corsOrigins: parseOrigins(process.env.CORS_ORIGINS)
+  corsOrigins: parseOrigins(process.env.CORS_ORIGINS),
+  monitorCacheTtlMs: clampPositiveInt(process.env.MONITOR_CACHE_TTL_MS, 500, 60_000, 4_000),
+  monitorStreamDefaultIntervalMs: clampPositiveInt(
+    process.env.MONITOR_STREAM_DEFAULT_INTERVAL_MS,
+    2_000,
+    120_000,
+    15_000
+  ),
+  monitorStreamMinIntervalMs: clampPositiveInt(
+    process.env.MONITOR_STREAM_MIN_INTERVAL_MS,
+    2_000,
+    120_000,
+    5_000
+  ),
+  monitorStreamMaxIntervalMs: clampPositiveInt(
+    process.env.MONITOR_STREAM_MAX_INTERVAL_MS,
+    2_000,
+    180_000,
+    60_000
+  ),
+  monitorStreamHeartbeatMs: clampPositiveInt(
+    process.env.MONITOR_STREAM_HEARTBEAT_MS,
+    2_000,
+    120_000,
+    15_000
+  )
 };
 
 module.exports = { config };

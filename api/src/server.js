@@ -4,6 +4,7 @@ const cors = require("cors");
 const express = require("express");
 const helmet = require("helmet");
 const jwt = require("jsonwebtoken");
+const packageMeta = require("../package.json");
 
 const { config } = require("./config");
 const {
@@ -12,10 +13,13 @@ const {
   getSellerSummary,
   listSellers,
   removeSeller,
+  resumeAllSellers,
+  resumeSeller,
   runSellerAction
 } = require("./fleetService");
 const {
   getFleetUsage,
+  getMonitoringOverviewCached,
   getMonitoringOverview,
   getVmUsage
 } = require("./monitoringService");
@@ -26,21 +30,30 @@ const refreshSessions = new Map();
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: "1mb" }));
 
-if (config.corsOrigins.length > 0) {
-  app.use(
-    cors({
-      origin(origin, callback) {
-        if (!origin || config.corsOrigins.includes(origin)) {
-          callback(null, true);
-          return;
-        }
-        callback(new Error("Origin not allowed by CORS"));
+app.use(
+  cors({
+    origin(origin, callback) {
+      // No Origin header means non-browser clients (curl/server-to-server) or
+      // same-origin requests that do not require CORS handling.
+      if (!origin) {
+        callback(null, true);
+        return;
       }
-    })
-  );
-} else {
-  app.use(cors());
-}
+
+      if (config.corsOrigins.length === 0) {
+        callback(new Error("CORS_ORIGINS is not configured"));
+        return;
+      }
+
+      if (config.corsOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error("Origin not allowed by CORS"));
+    }
+  })
+);
 
 function timingSafeEqual(left, right) {
   const leftBuffer = Buffer.from(String(left || ""), "utf8");
@@ -273,6 +286,14 @@ function asyncHandler(handler) {
   };
 }
 
+function parseIntervalMs(value, fallbackMs = 5000) {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallbackMs;
+  }
+  return parsed;
+}
+
 app.get("/healthz", (req, res) => {
   res.json({
     ok: true,
@@ -414,7 +435,7 @@ app.get("/api/v1/meta", (req, res) => {
   const authMode = getAuthMode();
   res.json({
     service: "chromium-fleet-api",
-    version: "0.3.0",
+    version: packageMeta.version,
     authEnabled: !config.disableAuth,
     authMode: {
       jwtEnabled: authMode.jwtConfigured,
@@ -429,7 +450,9 @@ app.get("/api/v1/meta", (req, res) => {
       "/api/v1/monitor/overview",
       "/api/v1/monitor/vm",
       "/api/v1/monitor/fleet",
-      "/api/v1/monitor/cluster"
+      "/api/v1/monitor/cluster",
+      "/api/v1/monitor/stream",
+      "/api/v1/status/live"
     ]
   });
 });
@@ -437,7 +460,7 @@ app.get("/api/v1/meta", (req, res) => {
 app.get(
   "/api/v1/monitor/overview",
   asyncHandler(async (req, res) => {
-    const overview = await getMonitoringOverview();
+    const overview = await getMonitoringOverviewCached(config.monitorCacheTtlMs);
     res.json(overview);
   })
 );
@@ -474,6 +497,81 @@ app.get(
     });
   })
 );
+
+function monitoringStreamHandler(req, res) {
+  const minIntervalMs = config.monitorStreamMinIntervalMs;
+  const maxIntervalMs = config.monitorStreamMaxIntervalMs;
+  const requestedIntervalMs = parseIntervalMs(req.query.intervalMs, config.monitorStreamDefaultIntervalMs);
+  const intervalMs = Math.max(minIntervalMs, Math.min(maxIntervalMs, requestedIntervalMs));
+  const heartbeatMs = Math.max(2_000, Math.min(config.monitorStreamHeartbeatMs, intervalMs));
+
+  res.status(200);
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  res.write(`retry: ${intervalMs}\n\n`);
+  if (typeof res.flushHeaders === "function") {
+    res.flushHeaders();
+  }
+
+  let closed = false;
+  let inFlight = false;
+
+  const writeEvent = (eventName, payload) => {
+    if (closed) {
+      return;
+    }
+    res.write(`event: ${eventName}\n`);
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  };
+
+  const pushOverview = async () => {
+    if (closed || inFlight) {
+      return;
+    }
+    inFlight = true;
+    try {
+      const overview = await getMonitoringOverviewCached(config.monitorCacheTtlMs);
+      writeEvent("overview", overview);
+    } catch (error) {
+      writeEvent("error", {
+        timestamp: new Date().toISOString(),
+        error: error?.message || "monitor stream failed"
+      });
+    } finally {
+      inFlight = false;
+    }
+  };
+
+  writeEvent("ready", {
+    timestamp: new Date().toISOString(),
+    intervalMs,
+    heartbeatMs,
+    cacheTtlMs: config.monitorCacheTtlMs
+  });
+  void pushOverview();
+
+  const overviewInterval = setInterval(() => {
+    void pushOverview();
+  }, intervalMs);
+
+  const heartbeatInterval = setInterval(() => {
+    if (!closed) {
+      res.write(`: keepalive ${Date.now()}\n\n`);
+    }
+  }, heartbeatMs);
+
+  req.on("close", () => {
+    closed = true;
+    clearInterval(overviewInterval);
+    clearInterval(heartbeatInterval);
+  });
+}
+
+app.get("/api/v1/monitor/stream", monitoringStreamHandler);
+app.get("/api/v1/status/live", monitoringStreamHandler);
 
 app.get(
   "/api/v1/sellers",
@@ -512,6 +610,22 @@ app.post(
   asyncHandler(async (req, res) => {
     const { seller, action } = req.params;
     const result = await runSellerAction(seller, action);
+    res.json(result);
+  })
+);
+
+app.post(
+  "/api/v1/sellers/:seller/resume",
+  asyncHandler(async (req, res) => {
+    const result = await resumeSeller(req.params.seller);
+    res.json(result);
+  })
+);
+
+app.post(
+  "/api/v1/sellers/resume-all",
+  asyncHandler(async (req, res) => {
+    const result = await resumeAllSellers();
     res.json(result);
   })
 );

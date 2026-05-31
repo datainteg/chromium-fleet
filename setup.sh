@@ -60,10 +60,10 @@ CHROME_PORT="${CHROME_PORT:-3000}"
 CHROME_USER="${CHROME_USER:-admin}"
 CHROME_PASS="${CHROME_PASS:?CHROME_PASS env var is required}"
 TZ_NAME="${TZ_NAME:-Asia/Kolkata}"
-MEM_LIMIT="${MEM_LIMIT:-3g}"
-CPU_LIMIT="${CPU_LIMIT:-1.5}"
-SHM_SIZE="${SHM_SIZE:-2gb}"
-SWAP_SIZE="${SWAP_SIZE:-4G}"
+MEM_LIMIT="${MEM_LIMIT:-2g}"
+CPU_LIMIT="${CPU_LIMIT:-1.0}"
+SHM_SIZE="${SHM_SIZE:-1gb}"
+SWAP_SIZE="${SWAP_SIZE:-2G}"
 PROXY_LIST="${PROXY_LIST:-}"
 
 if ! [[ "$SELLER_NAME" =~ ^[a-z0-9][a-z0-9_-]{0,31}$ ]]; then
@@ -75,6 +75,20 @@ if ! [[ "$CHROME_PORT" =~ ^[0-9]+$ ]] || (( CHROME_PORT < 1 || CHROME_PORT > 655
   echo "ERROR: CHROME_PORT must be between 1 and 65535"
   exit 1
 fi
+
+is_valid_size_value() {
+  [[ "$1" =~ ^[1-9][0-9]*([kKmMgG])([bB])?$ ]]
+}
+
+is_valid_cpu_limit() {
+  [[ "$1" =~ ^[0-9]+([.][0-9]+)?$ ]] || return 1
+  awk -v value="$1" 'BEGIN { exit !(value > 0 && value <= 8) }'
+}
+
+is_valid_size_value "$MEM_LIMIT" || { echo "ERROR: MEM_LIMIT must look like 2g, 1536m, 1gb"; exit 1; }
+is_valid_cpu_limit "$CPU_LIMIT" || { echo "ERROR: CPU_LIMIT must be a positive number up to 8"; exit 1; }
+is_valid_size_value "$SHM_SIZE" || { echo "ERROR: SHM_SIZE must look like 1gb or 512m"; exit 1; }
+is_valid_size_value "$SWAP_SIZE" || { echo "ERROR: SWAP_SIZE must look like 2G or 4096M"; exit 1; }
 
 echo ""
 echo "======================================"
@@ -131,6 +145,13 @@ else
 fi
 
 # ─── [5] Directories ─────────────────────────────────────────
+echo "  Applying low-RAM kernel tuning..."
+cat > /etc/sysctl.d/99-chromium-fleet.conf <<'SYSCTL'
+vm.swappiness=20
+vm.vfs_cache_pressure=100
+SYSCTL
+sysctl -p /etc/sysctl.d/99-chromium-fleet.conf >/dev/null
+
 echo "[5/9] Creating directories..."
 mkdir -p "$APP_DIR"/{profile,extensions,logs,proxy}
 
@@ -433,6 +454,10 @@ crontab -l -u root 2>/dev/null \
   > "$CRON_TMP" || true
 
 cat >> "$CRON_TMP" <<CRON
+
+
+# Auto-resume check shortly after VM boot
+@reboot sleep 75 && /usr/local/bin/${SELLER_NAME}-health.sh >/dev/null 2>&1
 
 # ── ${SELLER_NAME}: container health every 5 min ────────────────────────
 */5 * * * * /usr/local/bin/${SELLER_NAME}-health.sh >/dev/null 2>&1

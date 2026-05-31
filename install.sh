@@ -25,10 +25,10 @@ CHROME_USER="admin"
 CHROME_PASS=""
 SUBDOMAIN=""
 TZ_NAME="Asia/Kolkata"
-MEM_LIMIT="3g"
-CPU_LIMIT="1.5"
-SHM_SIZE="2gb"
-SWAP_SIZE="4G"
+MEM_LIMIT="2g"
+CPU_LIMIT="1.0"
+SHM_SIZE="1gb"
+SWAP_SIZE="2G"
 API_PORT="8787"
 PROXIES=()
 
@@ -74,6 +74,15 @@ is_valid_proxy() {
   [[ "$port" =~ ^[0-9]+$ ]] && (( port >= 1 && port <= 65535 ))
 }
 
+is_valid_size_value() {
+  [[ "$1" =~ ^[1-9][0-9]*([kKmMgG])([bB])?$ ]]
+}
+
+is_valid_cpu_limit() {
+  [[ "$1" =~ ^[0-9]+([.][0-9]+)?$ ]] || return 1
+  awk -v value="$1" 'BEGIN { exit !(value > 0 && value <= 8) }'
+}
+
 download_script() {
   local out="$1"
   shift
@@ -97,10 +106,10 @@ usage() {
   echo "  --pass        PASS        Basic-auth password      [REQUIRED]"
   echo "  --subdomain   DOMAIN      e.g. s1.example.com      [REQUIRED]"
   echo "  --tz          TIMEZONE    Container timezone        (default: Asia/Kolkata)"
-  echo "  --mem         LIMIT       Docker mem limit          (default: 3g)"
-  echo "  --cpu         LIMIT       Docker CPU limit          (default: 1.5)"
-  echo "  --shm         SIZE        /dev/shm size             (default: 2gb)"
-  echo "  --swap        SIZE        Swap size                 (default: 4G)"
+  echo "  --mem         LIMIT       Docker mem limit          (default: 2g)"
+  echo "  --cpu         LIMIT       Docker CPU limit          (default: 1.0)"
+  echo "  --shm         SIZE        /dev/shm size             (default: 1gb)"
+  echo "  --swap        SIZE        Swap size                 (default: 2G)"
   echo "  --api-port    PORT        Local API upstream port   (default: 8787)"
   echo "  --proxy       PROXY       host:port:user:pass       (optional, repeatable)"
   echo "  --help                    Show this message"
@@ -145,6 +154,10 @@ is_valid_seller_name "$SELLER_NAME" || ERRORS+=("--seller must match: ^[a-z0-9][
 is_valid_port "$CHROME_PORT" || ERRORS+=("--port must be a number between 1 and 65535")
 is_valid_port "$API_PORT" || ERRORS+=("--api-port must be a number between 1 and 65535")
 is_valid_subdomain "$SUBDOMAIN" || ERRORS+=("--subdomain must be a valid domain like chrome1.example.com")
+is_valid_size_value "$MEM_LIMIT" || ERRORS+=("--mem must look like 2g, 1536m, 1gb")
+is_valid_cpu_limit "$CPU_LIMIT" || ERRORS+=("--cpu must be a positive number up to 8 (example: 1.0)")
+is_valid_size_value "$SHM_SIZE" || ERRORS+=("--shm must look like 1gb, 512m")
+is_valid_size_value "$SWAP_SIZE" || ERRORS+=("--swap must look like 2G, 4096M")
 for proxy in "${PROXIES[@]}"; do
   is_valid_proxy "$proxy" || ERRORS+=("Invalid --proxy value '$proxy' (expected host:port:user:pass with numeric port)")
 done

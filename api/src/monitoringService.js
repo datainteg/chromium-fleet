@@ -344,8 +344,40 @@ async function getMonitoringOverview() {
   };
 }
 
+const monitoringOverviewCache = {
+  value: null,
+  generatedAtMs: 0,
+  inFlight: null
+};
+
+async function getMonitoringOverviewCached(cacheTtlMs) {
+  const ttl = Number.isFinite(cacheTtlMs) && cacheTtlMs >= 0 ? cacheTtlMs : 0;
+  const now = Date.now();
+
+  if (monitoringOverviewCache.value && now - monitoringOverviewCache.generatedAtMs <= ttl) {
+    return monitoringOverviewCache.value;
+  }
+
+  if (monitoringOverviewCache.inFlight) {
+    return monitoringOverviewCache.inFlight;
+  }
+
+  monitoringOverviewCache.inFlight = getMonitoringOverview()
+    .then((overview) => {
+      monitoringOverviewCache.value = overview;
+      monitoringOverviewCache.generatedAtMs = Date.now();
+      return overview;
+    })
+    .finally(() => {
+      monitoringOverviewCache.inFlight = null;
+    });
+
+  return monitoringOverviewCache.inFlight;
+}
+
 module.exports = {
   getVmUsage,
   getFleetUsage,
-  getMonitoringOverview
+  getMonitoringOverview,
+  getMonitoringOverviewCached
 };
