@@ -1,5 +1,4 @@
 const SELLER_REGEX = /^[a-z0-9][a-z0-9_-]{0,31}$/;
-const SUBDOMAIN_REGEX = /^[A-Za-z0-9.-]+$/;
 
 function isValidSellerName(value) {
   return typeof value === "string" && SELLER_REGEX.test(value);
@@ -11,7 +10,34 @@ function isValidPort(value) {
 }
 
 function isValidSubdomain(value) {
-  return typeof value === "string" && value.length > 0 && SUBDOMAIN_REGEX.test(value);
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  const domain = value.trim();
+  if (!domain || domain.length > 253 || domain.startsWith(".") || domain.endsWith(".") || domain.includes("..")) {
+    return false;
+  }
+
+  const labels = domain.split(".");
+  if (labels.length < 2) {
+    return false;
+  }
+
+  for (const label of labels) {
+    if (
+      label.length < 1 ||
+      label.length > 63 ||
+      !/^[A-Za-z0-9-]+$/.test(label) ||
+      label.startsWith("-") ||
+      label.endsWith("-")
+    ) {
+      return false;
+    }
+  }
+
+  const tld = labels[labels.length - 1];
+  return tld.length >= 2;
 }
 
 function isValidProxy(value) {

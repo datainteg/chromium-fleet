@@ -28,8 +28,28 @@ if ! [[ "$API_PORT" =~ ^[0-9]+$ ]] || (( API_PORT < 1 || API_PORT > 65535 )); th
   exit 1
 fi
 
-if ! [[ "$SUBDOMAIN" =~ ^[A-Za-z0-9.-]+$ ]]; then
-  echo "ERROR: SUBDOMAIN contains invalid characters"
+is_valid_subdomain() {
+  local domain="$1" label tld idx
+  [[ -n "$domain" && ${#domain} -le 253 ]] || return 1
+  [[ "$domain" != .* && "$domain" != *. ]] || return 1
+  [[ "$domain" != *..* ]] || return 1
+
+  IFS='.' read -r -a labels <<< "$domain"
+  (( ${#labels[@]} >= 2 )) || return 1
+
+  for label in "${labels[@]}"; do
+    [[ ${#label} -ge 1 && ${#label} -le 63 ]] || return 1
+    [[ "$label" =~ ^[A-Za-z0-9-]+$ ]] || return 1
+    [[ "$label" != -* && "$label" != *- ]] || return 1
+  done
+
+  idx=$((${#labels[@]} - 1))
+  tld="${labels[$idx]}"
+  [[ ${#tld} -ge 2 ]] || return 1
+}
+
+if ! is_valid_subdomain "$SUBDOMAIN"; then
+  echo "ERROR: SUBDOMAIN must be a valid domain like chrome1.example.com"
   exit 1
 fi
 

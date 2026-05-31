@@ -198,7 +198,10 @@ function validateInstallPayload(payload) {
     throw Object.assign(new Error("pass is required"), { statusCode: 400 });
   }
   if (!isValidSubdomain(subdomain)) {
-    throw Object.assign(new Error("subdomain is required and contains invalid characters"), { statusCode: 400 });
+    throw Object.assign(
+      new Error("subdomain is required and must be a valid domain like chrome1.example.com"),
+      { statusCode: 400 }
+    );
   }
 
   if (payload.port !== undefined && !isValidPort(payload.port)) {

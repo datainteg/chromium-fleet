@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="../docs/assets/datainteg-chromium-fleet-logo.svg" alt="Datainteg Chromium Fleet" width="220" />
+</p>
+
 # Chromium Fleet API
 
 REST control plane for `chromium-fleet`, built for frontend integration and operations dashboards.

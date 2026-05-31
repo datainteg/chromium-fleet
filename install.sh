@@ -47,6 +47,26 @@ is_valid_port() {
   [[ "$1" =~ ^[0-9]+$ ]] && (( "$1" >= 1 && "$1" <= 65535 ))
 }
 
+is_valid_subdomain() {
+  local domain="$1" label tld idx
+  [[ -n "$domain" && ${#domain} -le 253 ]] || return 1
+  [[ "$domain" != .* && "$domain" != *. ]] || return 1
+  [[ "$domain" != *..* ]] || return 1
+
+  IFS='.' read -r -a labels <<< "$domain"
+  (( ${#labels[@]} >= 2 )) || return 1
+
+  for label in "${labels[@]}"; do
+    [[ ${#label} -ge 1 && ${#label} -le 63 ]] || return 1
+    [[ "$label" =~ ^[A-Za-z0-9-]+$ ]] || return 1
+    [[ "$label" != -* && "$label" != *- ]] || return 1
+  done
+
+  idx=$((${#labels[@]} - 1))
+  tld="${labels[$idx]}"
+  [[ ${#tld} -ge 2 ]] || return 1
+}
+
 is_valid_proxy() {
   local proxy="$1" host port user pass extra
   IFS=: read -r host port user pass extra <<< "$proxy"
@@ -124,6 +144,7 @@ ERRORS=()
 is_valid_seller_name "$SELLER_NAME" || ERRORS+=("--seller must match: ^[a-z0-9][a-z0-9_-]{0,31}$")
 is_valid_port "$CHROME_PORT" || ERRORS+=("--port must be a number between 1 and 65535")
 is_valid_port "$API_PORT" || ERRORS+=("--api-port must be a number between 1 and 65535")
+is_valid_subdomain "$SUBDOMAIN" || ERRORS+=("--subdomain must be a valid domain like chrome1.example.com")
 for proxy in "${PROXIES[@]}"; do
   is_valid_proxy "$proxy" || ERRORS+=("Invalid --proxy value '$proxy' (expected host:port:user:pass with numeric port)")
 done
