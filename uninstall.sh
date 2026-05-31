@@ -57,7 +57,9 @@ if [ -f "$APP_DIR/docker-compose.yml" ]; then
   docker compose down --volumes --remove-orphans 2>/dev/null || true
 fi
 
-echo "[2/6] Removing app directory..."
+echo "[2/6] Removing app directory and credentials..."
+# Securely remove proxy credentials before directory removal
+rm -f "$APP_DIR/proxy.env"
 rm -rf "$APP_DIR"
 
 echo "[3/6] Removing maintenance scripts..."

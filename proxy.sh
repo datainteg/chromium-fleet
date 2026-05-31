@@ -91,27 +91,38 @@ if [ -z "$COMPOSE_FILE" ] || [ -z "$P_USER" ] || [ -z "$P_PASS" ] || [ -z "$P_HO
   exit 1
 fi
 
+APP_DIR="$(dirname "$COMPOSE_FILE")"
+PROXY_ENV_FILE="$APP_DIR/proxy.env"
 PROXY_URL="http://${P_USER}:${P_PASS}@${P_HOST}:${P_PORT}"
-ESCAPED_PROXY="$(printf '%s' "$PROXY_URL" | sed -e 's/[\\/&|]/\\&/g')"
 
-if grep -q 'HTTP_PROXY=http://' "$COMPOSE_FILE"; then
-  sed -i "s|HTTP_PROXY=http://[^[:space:]]*|HTTP_PROXY=${ESCAPED_PROXY}|g" "$COMPOSE_FILE"
-  sed -i "s|HTTPS_PROXY=http://[^[:space:]]*|HTTPS_PROXY=${ESCAPED_PROXY}|g" "$COMPOSE_FILE"
-  sed -i "s|http_proxy=http://[^[:space:]]*|http_proxy=${ESCAPED_PROXY}|g" "$COMPOSE_FILE"
-  sed -i "s|https_proxy=http://[^[:space:]]*|https_proxy=${ESCAPED_PROXY}|g" "$COMPOSE_FILE"
-else
-  awk -v proxy="$PROXY_URL" '
-    { print }
-    /CHROME_CLI=/ && !inserted {
-      print "      - HTTP_PROXY=" proxy
-      print "      - HTTPS_PROXY=" proxy
-      print "      - http_proxy=" proxy
-      print "      - https_proxy=" proxy
-      print "      - NO_PROXY=localhost,127.0.0.1"
-      inserted=1
-    }
-  ' "$COMPOSE_FILE" > "${COMPOSE_FILE}.tmp"
-  mv "${COMPOSE_FILE}.tmp" "$COMPOSE_FILE"
+# Write credentials to proxy.env — never into YAML (avoids docker inspect leaks)
+{
+  echo "HTTP_PROXY=${PROXY_URL}"
+  echo "HTTPS_PROXY=${PROXY_URL}"
+  echo "http_proxy=${PROXY_URL}"
+  echo "https_proxy=${PROXY_URL}"
+  echo "NO_PROXY=localhost,127.0.0.1"
+} > "${PROXY_ENV_FILE}.tmp"
+chmod 600 "${PROXY_ENV_FILE}.tmp"
+chown root:root "${PROXY_ENV_FILE}.tmp"
+mv "${PROXY_ENV_FILE}.tmp" "$PROXY_ENV_FILE"
+
+# Migration: remove any proxy env vars from docker-compose.yml
+# (backward compat for installs created before this security patch)
+if grep -q 'HTTP_PROXY=http://' "$COMPOSE_FILE" 2>/dev/null; then
+  sed -i '/[[:space:]]*- HTTP_PROXY=http:\/\//d' "$COMPOSE_FILE"
+  sed -i '/[[:space:]]*- HTTPS_PROXY=http:\/\//d' "$COMPOSE_FILE"
+  sed -i '/[[:space:]]*- http_proxy=http:\/\//d' "$COMPOSE_FILE"
+  sed -i '/[[:space:]]*- https_proxy=http:\/\//d' "$COMPOSE_FILE"
+  sed -i '/[[:space:]]*- NO_PROXY=localhost/d' "$COMPOSE_FILE"
+  echo "  Migrated proxy credentials from YAML to proxy.env" >&2
+fi
+
+# Migration: add env_file directive if not already present
+if ! grep -q 'env_file:' "$COMPOSE_FILE" 2>/dev/null; then
+  awk '/^    volumes:/ { print "    env_file:"; print "      - ./proxy.env" } { print }' \
+    "$COMPOSE_FILE" > "${COMPOSE_FILE}.tmp" && mv "${COMPOSE_FILE}.tmp" "$COMPOSE_FILE"
+  echo "  Added env_file directive to docker-compose.yml" >&2
 fi
 SETPROXY
 chmod 700 "/usr/local/bin/${SELLER_NAME}-set-proxy-env.sh"

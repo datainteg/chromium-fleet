@@ -314,6 +314,17 @@ async function removeSeller(seller) {
     throw error;
   }
 
+  if (process.env.FLEET_ROOT) {
+    throw Object.assign(
+      new Error(
+        "Seller removal requires running uninstall.sh directly on the host. " +
+        "The API cannot remove sellers when running in Docker mode (FLEET_ROOT is set). " +
+        "SSH into the VM and run: bash /fleet/uninstall.sh --seller NAME --yes"
+      ),
+      { statusCode: 501 }
+    );
+  }
+
   if (!isValidSellerName(seller)) {
     const error = new Error("Invalid seller name");
     error.statusCode = 400;

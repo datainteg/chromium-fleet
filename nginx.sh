@@ -78,9 +78,21 @@ systemctl enable --now nginx
 # ─── Basic Auth ──────────────────────────────────────────────
 echo "Configuring Basic Auth..."
 mkdir -p "$HTPASSWD_DIR"
-htpasswd -cb "$HTPASSWD_FILE" "$CHROME_USER" "$CHROME_PASS"
-chmod 640 "$HTPASSWD_FILE"
-chown root:www-data "$HTPASSWD_FILE"
+# Restrict directory: only root + www-data group can enter
+chmod 750 "$HTPASSWD_DIR"
+chown root:www-data "$HTPASSWD_DIR"
+# Create htpasswd atomically via temp file to avoid any world-readable window
+# umask 077 ensures temp file has no group/other read during creation
+HTPASSWD_TMP="${HTPASSWD_FILE}.tmp.$$"
+(umask 077 && htpasswd -cb "$HTPASSWD_TMP" "$CHROME_USER" "$CHROME_PASS")
+# Set final permissions before making live
+# 640 root:www-data is minimum required: Nginx workers run as www-data and
+# must be able to read the file for HTTP basic auth processing.
+# World-readable (o+r) is explicitly denied.
+chmod 640 "$HTPASSWD_TMP"
+chown root:www-data "$HTPASSWD_TMP"
+# Atomic rename — no window where file exists with wrong permissions
+mv "$HTPASSWD_TMP" "$HTPASSWD_FILE"
 
 # ─── Nginx config ────────────────────────────────────────────
 echo "Writing Nginx config → $NGINX_AVAIL/$CONF_NAME"

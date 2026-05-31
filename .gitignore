@@ -1,2 +1,13 @@
 api/node_modules/
 api/.env
+
+# Runtime credentials and generated files
+proxy.env
+*.env
+!.env.example
+backups/
+*.tar.gz
+*.log
+.vscode/
+.DS_Store
+node_modules/

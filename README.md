@@ -124,6 +124,17 @@ sudo bash api/install-service.sh --docker
 
 Logs: `docker compose -f docker-compose.fleet.yml logs -f api`
 
+## Security Warning — Docker Socket
+
+The API container mounts `/var/run/docker.sock` (see `docker-compose.fleet.yml`). This grants the API container **host-level Docker control**, equivalent to root access on the VM.
+
+**Required mitigations before production:**
+- Keep the API private: always behind Nginx basic auth and API JWT auth.
+- Do not expose port `8787` directly to the internet — access only through Nginx.
+- Set `ALLOW_INSTALL=false` and `ALLOW_UNINSTALL=false` in `api/.env` once sellers are provisioned.
+- Restrict VM SSH access and Docker group membership.
+- Consider firewall rules: block port `8787` from external access.
+
 ## Crash Alerts via Webhook
 
 Set `WEBHOOK_URL` in `api/.env` to get notified when a Chrome instance crashes or recovers (Discord, Slack, or any HTTP endpoint).

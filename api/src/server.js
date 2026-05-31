@@ -40,6 +40,9 @@ const {
 
 const app = express();
 
+// Trust X-Forwarded-For set by Nginx reverse proxy for accurate IP-based rate limiting
+app.set("trust proxy", 1);
+
 app.use((req, res, next) => {
   req.requestId = crypto.randomUUID();
   res.setHeader("X-Request-ID", req.requestId);
@@ -85,13 +88,31 @@ app.use(
 );
 
 const authLimiter = rateLimit({
-  windowMs: config.rateLimitWindowMs,
-  max: config.rateLimitMax,
+  windowMs: config.rateLimitAuthWindowMs,
+  max: config.rateLimitAuthMax,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many auth attempts. Try again later." },
   skip: () => config.disableAuth
 });
+
+// Global rate limiter for all /api/* routes
+const apiLimiter = rateLimit({
+  windowMs: config.rateLimitApiWindowMs,
+  max: config.rateLimitApiMax,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => config.disableAuth,
+  message: { error: "Rate limit exceeded. Retry after the window resets." }
+});
+
+// Per-IP SSE connection counter (in-memory, reset on restart)
+const sseConnectionsByIp = new Map();
+
+function getSseClientIp(req) {
+  const forwarded = req.headers["x-forwarded-for"];
+  return forwarded ? forwarded.split(",")[0].trim() : (req.socket.remoteAddress || "unknown");
+}
 
 function timingSafeEqual(left, right) {
   const leftBuffer = Buffer.from(String(left || ""), "utf8");
@@ -470,6 +491,7 @@ app.post("/api/v1/auth/logout", authLimiter, (req, res) => {
   res.json({ loggedOut: true });
 });
 
+app.use("/api", apiLimiter);
 app.use("/api", authMiddleware);
 
 app.get("/api/v1/meta", (req, res) => {
@@ -556,6 +578,15 @@ app.get(
 );
 
 function monitoringStreamHandler(req, res) {
+  // Per-IP connection limit
+  const clientIp = getSseClientIp(req);
+  const currentConnections = sseConnectionsByIp.get(clientIp) || 0;
+  if (currentConnections >= config.sseMaxConnectionsPerIp) {
+    res.status(429).json({ error: "Too many active SSE streams from this IP. Close existing connections first." });
+    return;
+  }
+  sseConnectionsByIp.set(clientIp, currentConnections + 1);
+
   const minIntervalMs = config.monitorStreamMinIntervalMs;
   const maxIntervalMs = config.monitorStreamMaxIntervalMs;
   const requestedIntervalMs = parseIntervalMs(req.query.intervalMs, config.monitorStreamDefaultIntervalMs);
@@ -575,13 +606,41 @@ function monitoringStreamHandler(req, res) {
 
   let closed = false;
   let inFlight = false;
+  let totalBytesWritten = 0;
+  const quotaExceededAt = config.sseMaxBytesPerHour > 0
+    ? config.sseMaxBytesPerHour
+    : Infinity;
 
   const writeEvent = (eventName, payload) => {
-    if (closed) {
+    if (closed) return;
+
+    const data = JSON.stringify(payload);
+
+    // Cap individual event payload
+    if (data.length > config.sseMaxEventBytes) {
+      res.write(`event: error\n`);
+      res.write(`data: ${JSON.stringify({ error: "Event payload too large", size: data.length })}\n\n`);
       return;
     }
+
+    const eventBytes = data.length + eventName.length + 20;
+
+    // Enforce hourly stream quota
+    if (totalBytesWritten + eventBytes > quotaExceededAt) {
+      if (!closed) {
+        res.write(`event: error\n`);
+        res.write(`data: ${JSON.stringify({ error: "Stream quota exceeded. Reconnect to continue." })}\n\n`);
+        closed = true;
+        clearInterval(overviewInterval);
+        clearInterval(heartbeatInterval);
+        res.end();
+      }
+      return;
+    }
+
+    totalBytesWritten += eventBytes;
     res.write(`event: ${eventName}\n`);
-    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    res.write(`data: ${data}\n\n`);
   };
 
   const pushOverview = async () => {
@@ -624,6 +683,13 @@ function monitoringStreamHandler(req, res) {
     closed = true;
     clearInterval(overviewInterval);
     clearInterval(heartbeatInterval);
+    // Decrement per-IP SSE connection counter
+    const count = sseConnectionsByIp.get(clientIp) || 1;
+    if (count <= 1) {
+      sseConnectionsByIp.delete(clientIp);
+    } else {
+      sseConnectionsByIp.set(clientIp, count - 1);
+    }
   });
 }
 
@@ -797,11 +863,37 @@ app.use((req, res) => {
 
 app.use((error, req, res, next) => {
   const statusCode = error.statusCode || (error.message === "Origin not allowed by CORS" ? 403 : 500);
-  const details = error.details || null;
+
+  // Log full details internally — never expose to client
+  if (statusCode >= 500 || error.details) {
+    const logEntry = {
+      requestId: req.requestId,
+      method: req.method,
+      path: req.path,
+      statusCode,
+      message: error.message
+    };
+    if (error.details) {
+      logEntry.command = error.details.command;
+      logEntry.exitCode = error.details.code;
+      logEntry.timedOut = error.details.timedOut;
+      logEntry.durationMs = error.details.durationMs;
+      // Do NOT log stderr/stdout — may contain proxy credentials or secrets
+    }
+    console.error(`[ERROR]`, JSON.stringify(logEntry));
+  }
+
+  // Sanitized client response:
+  // - 4xx with explicit statusCode: return message (these are intentional user-facing errors)
+  // - 5xx or unhandled: return generic message only
+  const clientMessage =
+    error.statusCode && error.statusCode < 500
+      ? error.message || "Request error"
+      : "Internal server error";
 
   res.status(statusCode).json({
-    error: error.message || "Internal server error",
-    details
+    error: clientMessage,
+    requestId: req.requestId
   });
 });
 

@@ -57,7 +57,7 @@ npm install
 npm run dev
 ```
 
-Default: `http://0.0.0.0:8787`
+Default: `http://127.0.0.1:8787` (bind address from HOST env, default 127.0.0.1)
 
 ## Auth Flow (Recommended)
 1. Login with username/password:
@@ -257,6 +257,18 @@ For local development:
 ```env
 CORS_ORIGINS=http://localhost:3000,http://localhost:5173
 ```
+
+## Security Warning — Docker Socket
+
+Mounting `/var/run/docker.sock` grants the API container host-level Docker daemon access.
+
+**Production hardening checklist:**
+- Never expose port `8787` publicly — serve API only through Nginx (`/api` proxy).
+- API is protected by both Nginx basic auth AND JWT (`Authorization: Bearer`).
+- Set `ALLOW_INSTALL=false` + `ALLOW_UNINSTALL=false` once all sellers are provisioned.
+- Rate limiting is on by default — tune `RATE_LIMIT_API_MAX` and `RATE_LIMIT_AUTH_MAX`.
+- SSE streams are quota-limited per connection — tune `SSE_MAX_BYTES_PER_HOUR`.
+- In Docker mode (`FLEET_ROOT` is set), `POST /api/v1/sellers` and `DELETE /api/v1/sellers/:seller` return `501` — run `install.sh` / `uninstall.sh` on the host VM instead.
 
 ## Notes
 

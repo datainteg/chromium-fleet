@@ -162,11 +162,17 @@ mkdir -p "$APP_DIR"/{profile,extensions,logs,proxy}
 mkdir -p "$APP_DIR/profile/chromium"
 chown -R 1000:1000 "$APP_DIR/profile"
 
-# ─── [6] Resolve active proxy ────────────────────────────────
-PROXY_ENV_BLOCK=""
+# ─── [6] Write proxy.env (credentials never enter docker-compose.yml) ───────
+# Proxy credentials go into proxy.env (chmod 600), not into YAML.
+# proxy.env is always created — empty for no-proxy, populated for proxy mode.
+# This prevents credential leaks via docker inspect, git history, or file reads.
+PROXY_ENV_FILE="$APP_DIR/proxy.env"
+: > "$PROXY_ENV_FILE"
+chmod 600 "$PROXY_ENV_FILE"
+chown root:root "$PROXY_ENV_FILE"
 
 if [[ -n "$PROXY_LIST" ]]; then
-  echo "[6/9] Detecting active proxy..."
+  echo "[6/9] Detecting active proxy and writing proxy.env..."
   while IFS= read -r LINE; do
     [[ -z "$LINE" ]] && continue
     P_HOST="$(echo "$LINE" | cut -d: -f1)"
@@ -177,20 +183,23 @@ if [[ -n "$PROXY_LIST" ]]; then
         --proxy "http://${P_USER}:${P_PASS}@${P_HOST}:${P_PORT}" \
         https://api.ipify.org &>/dev/null; then
       echo "  Active proxy: $P_HOST:$P_PORT"
-      PROXY_ENV_BLOCK="
-      - HTTP_PROXY=http://${P_USER}:${P_PASS}@${P_HOST}:${P_PORT}
-      - HTTPS_PROXY=http://${P_USER}:${P_PASS}@${P_HOST}:${P_PORT}
-      - http_proxy=http://${P_USER}:${P_PASS}@${P_HOST}:${P_PORT}
-      - https_proxy=http://${P_USER}:${P_PASS}@${P_HOST}:${P_PORT}
-      - NO_PROXY=localhost,127.0.0.1"
+      {
+        echo "HTTP_PROXY=http://${P_USER}:${P_PASS}@${P_HOST}:${P_PORT}"
+        echo "HTTPS_PROXY=http://${P_USER}:${P_PASS}@${P_HOST}:${P_PORT}"
+        echo "http_proxy=http://${P_USER}:${P_PASS}@${P_HOST}:${P_PORT}"
+        echo "https_proxy=http://${P_USER}:${P_PASS}@${P_HOST}:${P_PORT}"
+        echo "NO_PROXY=localhost,127.0.0.1"
+      } > "$PROXY_ENV_FILE"
       break
     else
       echo "  Dead proxy: $P_HOST:$P_PORT — skipping"
     fi
   done <<< "$PROXY_LIST"
-  [[ -z "$PROXY_ENV_BLOCK" ]] && echo "  WARNING: All proxies unreachable — starting without proxy."
+  if [[ ! -s "$PROXY_ENV_FILE" ]]; then
+    echo "  WARNING: All proxies unreachable — starting without proxy."
+  fi
 else
-  echo "[6/9] No proxy configured — skipping."
+  echo "[6/9] No proxy configured — using direct connection."
 fi
 
 # ─── [7] docker-compose.yml ──────────────────────────────────
@@ -216,7 +225,9 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=${TZ_NAME}
-      - CHROME_CLI=--restore-last-session --disable-session-crashed-bubble --no-first-run --disable-translate${PROXY_ENV_BLOCK}
+      - CHROME_CLI=--restore-last-session --disable-session-crashed-bubble --no-first-run --disable-translate
+    env_file:
+      - ./proxy.env
 
     volumes:
       # ALL Chrome state lives here on the VM disk:
