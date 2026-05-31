@@ -232,6 +232,23 @@ else
   echo "    certbot --nginx -d $SUBDOMAIN --redirect"
 fi
 
+# ─── Certbot auto-renewal cron ───────────────────────────────
+echo "Configuring certbot auto-renewal..."
+CERTBOT_CRON_TMP="/tmp/certbot_crontab"
+crontab -l -u root 2>/dev/null \
+  | grep -v "certbot renew" \
+  > "$CERTBOT_CRON_TMP" || true
+
+cat >> "$CERTBOT_CRON_TMP" <<CERTCRON
+
+# ── certbot: renew certificates twice daily (recommended by Let's Encrypt) ──
+0 3,15 * * * certbot renew --quiet --deploy-hook "systemctl reload nginx" 2>/dev/null
+CERTCRON
+
+crontab -u root "$CERTBOT_CRON_TMP"
+rm -f "$CERTBOT_CRON_TMP"
+echo "  Certbot renewal scheduled: 03:00 and 15:00 UTC daily."
+
 echo ""
 echo "======================================"
 echo " [nginx-setup] done: ${SELLER_NAME}"

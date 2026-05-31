@@ -4,6 +4,7 @@ const cors = require("cors");
 const express = require("express");
 const helmet = require("helmet");
 const jwt = require("jsonwebtoken");
+const rateLimit = require("express-rate-limit");
 const packageMeta = require("../package.json");
 
 const { config } = require("./config");
@@ -18,8 +19,11 @@ const {
   runSellerAction,
   listProxies,
   addProxy,
-  removeProxy
+  removeProxy,
+  getSellerLogs,
+  testSellerProxies
 } = require("./fleetService");
+const { initSessions, getSessions, getSession, setSession, deleteSession } = require("./sessions");
 const {
   getFleetUsage,
   getMonitoringOverviewCached,
@@ -28,7 +32,22 @@ const {
 } = require("./monitoringService");
 
 const app = express();
-const refreshSessions = new Map();
+
+app.use((req, res, next) => {
+  req.requestId = crypto.randomUUID();
+  res.setHeader("X-Request-ID", req.requestId);
+  next();
+});
+
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    const ms = Date.now() - start;
+    const lvl = res.statusCode >= 500 ? "ERROR" : res.statusCode >= 400 ? "WARN" : "INFO";
+    process.stdout.write(`[${lvl}] ${req.method} ${req.path} ${res.statusCode} ${ms}ms rid=${req.requestId}\n`);
+  });
+  next();
+});
 
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: "1mb" }));
@@ -57,6 +76,15 @@ app.use(
     }
   })
 );
+
+const authLimiter = rateLimit({
+  windowMs: config.rateLimitWindowMs,
+  max: config.rateLimitMax,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many auth attempts. Try again later." },
+  skip: () => config.disableAuth
+});
 
 function timingSafeEqual(left, right) {
   const leftBuffer = Buffer.from(String(left || ""), "utf8");
@@ -150,27 +178,27 @@ function readIssuedAtAndExpiry(jwtToken) {
 
 function cleanupRefreshSessions() {
   const now = Math.floor(Date.now() / 1000);
-  for (const [tokenId, session] of refreshSessions.entries()) {
+  for (const [tokenId, session] of getSessions().entries()) {
     if (!session || !Number.isFinite(session.expiresAt) || session.expiresAt <= now) {
-      refreshSessions.delete(tokenId);
+      deleteSession(tokenId);
     }
   }
 }
 
 function revokeRefreshToken(tokenId, reason = "revoked") {
-  const session = refreshSessions.get(tokenId);
+  const session = getSession(tokenId);
   if (!session) {
     return false;
   }
   session.revoked = true;
   session.revokedAt = Math.floor(Date.now() / 1000);
   session.reason = reason;
-  refreshSessions.set(tokenId, session);
+  setSession(tokenId, session);
   return true;
 }
 
 function revokeAllRefreshTokensForSubject(subject, reason = "replaced") {
-  for (const [tokenId, session] of refreshSessions.entries()) {
+  for (const [tokenId, session] of getSessions().entries()) {
     if (session?.subject === subject && !session.revoked) {
       revokeRefreshToken(tokenId, reason);
     }
@@ -181,7 +209,7 @@ function rememberRevokedToken(tokenId, subject, issuedAt, expiresAt, reason) {
   if (!Number.isFinite(expiresAt)) {
     return;
   }
-  refreshSessions.set(tokenId, {
+  setSession(tokenId, {
     tokenId,
     subject,
     issuedAt: Number.isFinite(issuedAt) ? issuedAt : null,
@@ -203,7 +231,7 @@ function issueTokenPair(subject) {
   const refreshTiming = readIssuedAtAndExpiry(refreshToken);
 
   if (refreshTiming.expiresAt !== null) {
-    refreshSessions.set(refreshTokenId, {
+    setSession(refreshTokenId, {
       tokenId: refreshTokenId,
       subject,
       issuedAt: refreshTiming.issuedAt,
@@ -300,11 +328,14 @@ function parseIntervalMs(value, fallbackMs = 5000) {
 app.get("/healthz", (req, res) => {
   res.json({
     ok: true,
-    service: "chromium-fleet-api"
+    service: "chromium-fleet-api",
+    version: packageMeta.version,
+    uptimeSeconds: Math.floor(process.uptime()),
+    authEnabled: !config.disableAuth
   });
 });
 
-app.post("/api/v1/auth/login", (req, res) => {
+app.post("/api/v1/auth/login", authLimiter, (req, res) => {
   if (config.disableAuth) {
     res.status(400).json({ error: "Auth is disabled on this server" });
     return;
@@ -331,7 +362,7 @@ app.post("/api/v1/auth/login", (req, res) => {
   res.json(tokens);
 });
 
-app.post("/api/v1/auth/refresh", (req, res) => {
+app.post("/api/v1/auth/refresh", authLimiter, (req, res) => {
   if (config.disableAuth) {
     res.status(400).json({ error: "Auth is disabled on this server" });
     return;
@@ -368,7 +399,7 @@ app.post("/api/v1/auth/refresh", (req, res) => {
   }
 
   cleanupRefreshSessions();
-  const session = refreshSessions.get(claims.jti);
+  const session = getSession(claims.jti);
   if (session && session.subject !== claims.sub) {
     res.status(401).json({ error: "Invalid refresh token subject" });
     return;
@@ -380,7 +411,7 @@ app.post("/api/v1/auth/refresh", (req, res) => {
 
   const now = Math.floor(Date.now() / 1000);
   if (session && Number.isFinite(session.expiresAt) && session.expiresAt <= now) {
-    refreshSessions.delete(claims.jti);
+    deleteSession(claims.jti);
     res.status(401).json({ error: "Refresh token is expired" });
     return;
   }
@@ -394,7 +425,7 @@ app.post("/api/v1/auth/refresh", (req, res) => {
   res.json(tokens);
 });
 
-app.post("/api/v1/auth/logout", (req, res) => {
+app.post("/api/v1/auth/logout", authLimiter, (req, res) => {
   if (config.disableAuth) {
     res.status(400).json({ error: "Auth is disabled on this server" });
     return;
@@ -639,6 +670,25 @@ app.post(
   })
 );
 
+// ── Seller logs ────────────────────────────────────────────────────────────
+app.get(
+  "/api/v1/sellers/:seller/logs",
+  asyncHandler(async (req, res) => {
+    const lines = Math.min(Math.max(1, Number.parseInt(req.query.lines || "100", 10) || 100), 1000);
+    const result = await getSellerLogs(req.params.seller, lines);
+    res.json(result);
+  })
+);
+
+// ── Proxy live test ────────────────────────────────────────────────────────
+app.get(
+  "/api/v1/sellers/:seller/proxies/test",
+  asyncHandler(async (req, res) => {
+    const result = await testSellerProxies(req.params.seller);
+    res.json(result);
+  })
+);
+
 // ── Proxy pool management ──────────────────────────────────────────────────
 // These endpoints are no-ops for sellers without proxies (return empty list).
 // Proxy is fully optional — sellers without a proxies.conf work normally.
@@ -686,7 +736,20 @@ app.use((error, req, res, next) => {
   });
 });
 
-app.listen(config.port, config.host, () => {
+async function start() {
+  await initSessions(config.sessionsFile);
   const authMode = config.disableAuth ? "disabled" : "enabled";
-  console.log(`chromium-fleet-api listening on http://${config.host}:${config.port} (auth ${authMode})`);
+  const httpServer = app.listen(config.port, config.host, () => {
+    console.log(`chromium-fleet-api listening on http://${config.host}:${config.port} (auth ${authMode})`);
+  });
+
+  process.on("SIGTERM", () => {
+    httpServer.close(() => process.exit(0));
+    setTimeout(() => process.exit(1), 10_000).unref();
+  });
+}
+
+start().catch((err) => {
+  console.error("Failed to start:", err.message);
+  process.exit(1);
 });

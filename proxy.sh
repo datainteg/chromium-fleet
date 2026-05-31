@@ -59,7 +59,7 @@ find_active_proxy() {
       echo "${H}:${P}:${U}:${W}"
       return 0
     fi
-  done < "$PROXY_CONF"
+  done < <(shuf "$PROXY_CONF" 2>/dev/null || cat "$PROXY_CONF")
   return 1
 }
 
@@ -173,7 +173,7 @@ find_active() {
       echo "\${H}:\${P}:\${U}:\${W}"
       return 0
     fi
-  done < "\$PROXY_CONF"
+  done < <(shuf "\$PROXY_CONF" 2>/dev/null || cat "\$PROXY_CONF")
   return 1
 }
 
@@ -257,7 +257,7 @@ while IFS=: read -r H P U W; do
     NEW="\${H}:\${P}:\${U}:\${W}"
     break
   fi
-done < "\$PROXY_CONF"
+done < <(shuf "\$PROXY_CONF" 2>/dev/null || cat "\$PROXY_CONF")
 
 if [ -z "\$NEW" ]; then
   # Dead one might be back, try all proxies including dead one
@@ -269,7 +269,7 @@ if [ -z "\$NEW" ]; then
       NEW="\${H}:\${P}:\${U}:\${W}"
       break
     fi
-  done < "\$PROXY_CONF"
+  done < <(shuf "\$PROXY_CONF" 2>/dev/null || cat "\$PROXY_CONF")
 fi
 
 if [ -z "\$NEW" ]; then

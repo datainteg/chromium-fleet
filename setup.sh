@@ -244,6 +244,13 @@ services:
     # before the container is killed on VM shutdown.
     # This is what keeps you logged in after a VM stop/start.
     stop_grace_period: 30s
+
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
 COMPOSE
 
 # ─── [8] Helper scripts ──────────────────────────────────────
@@ -440,6 +447,39 @@ echo "\$TS | DONE  | Complete." >> "\$LOG"
   tail -100 "\$LOG" > "\$LOG.tmp" && mv "\$LOG.tmp" "\$LOG"
 CLEANUP
 
+# Profile backup — daily tar of profile dir, keeps last 3
+cat > "/usr/local/bin/${SELLER_NAME}-backup-profile.sh" <<BACKUP
+#!/bin/bash
+APP_DIR="$APP_DIR"
+BACKUP_DIR="\$APP_DIR/backups"
+LOG="\$APP_DIR/logs/backup.log"
+TS="\$(date '+%Y-%m-%d %H:%M:%S')"
+
+mkdir -p "\$BACKUP_DIR"
+STAMP="\$(date +%Y%m%d)"
+DEST="\$BACKUP_DIR/profile-\$STAMP.tar.gz"
+
+if [ -f "\$DEST" ]; then
+  echo "\$TS | SKIP  | Backup already exists for today: \$DEST" >> "\$LOG"
+  exit 0
+fi
+
+echo "\$TS | START | Backing up profile..." >> "\$LOG"
+if tar -czf "\$DEST" -C "\$APP_DIR" profile 2>/dev/null; then
+  SIZE="\$(du -sh "\$DEST" | cut -f1)"
+  echo "\$TS | OK    | \$DEST (\$SIZE)" >> "\$LOG"
+  # Keep last 3 daily backups
+  ls -t "\$BACKUP_DIR"/profile-*.tar.gz 2>/dev/null | tail -n +4 | xargs rm -f
+else
+  echo "\$TS | ERROR | Backup failed." >> "\$LOG"
+fi
+
+[ "\$(wc -l < "\$LOG" 2>/dev/null || echo 0)" -gt 200 ] && \
+  tail -100 "\$LOG" > "\$LOG.tmp" && mv "\$LOG.tmp" "\$LOG"
+BACKUP
+
+chmod +x "/usr/local/bin/${SELLER_NAME}-backup-profile.sh"
+
 chmod +x \
   "/usr/local/bin/${SELLER_NAME}-health.sh" \
   "/usr/local/bin/${SELLER_NAME}-clear-logs.sh"
@@ -451,6 +491,7 @@ crontab -l -u root 2>/dev/null \
   | grep -v "${SELLER_NAME}-health" \
   | grep -v "${SELLER_NAME}-clear-logs" \
   | grep -v "${SELLER_NAME}-proxy-health" \
+  | grep -v "${SELLER_NAME}-backup-profile" \
   > "$CRON_TMP" || true
 
 cat >> "$CRON_TMP" <<CRON
@@ -475,6 +516,9 @@ cat >> "$CRON_TMP" <<CRON
 # ── ${SELLER_NAME}: weekly image update Sun 02:00 UTC (07:30 IST) ───────
 # Server is running; pull latest image and recreate with fresh container.
 0 2 * * 0 cd ${APP_DIR} && docker compose pull -q && docker compose up -d --force-recreate >/dev/null 2>&1
+
+# ── ${SELLER_NAME}: daily profile backup 02:00 UTC (07:30 IST) ──────────
+0 2 * * * /usr/local/bin/${SELLER_NAME}-backup-profile.sh >/dev/null 2>&1
 CRON
 
 crontab -u root "$CRON_TMP"

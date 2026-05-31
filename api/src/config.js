@@ -54,7 +54,7 @@ const refreshTokenSecret = parseString(process.env.REFRESH_TOKEN_SECRET, jwtSecr
 
 const config = {
   port: parsePositiveInt(process.env.PORT, 8787),
-  host: process.env.HOST || "0.0.0.0",
+  host: process.env.HOST || "127.0.0.1",
   apiKey: process.env.API_KEY || "",
   authUsername,
   authPassword,
@@ -73,6 +73,9 @@ const config = {
   sellerRoot: process.env.SELLER_ROOT || "/opt",
   fleetRoot: process.env.FLEET_ROOT || path.resolve(__dirname, "..", ".."),
   corsOrigins: parseOrigins(process.env.CORS_ORIGINS),
+  sessionsFile: parseString(process.env.SESSIONS_FILE, "/opt/chromium-fleet-sessions.json"),
+  rateLimitWindowMs: parsePositiveInt(process.env.RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000),
+  rateLimitMax: parsePositiveInt(process.env.RATE_LIMIT_MAX, 20),
   monitorCacheTtlMs: clampPositiveInt(process.env.MONITOR_CACHE_TTL_MS, 500, 60_000, 4_000),
   monitorStreamDefaultIntervalMs: clampPositiveInt(
     process.env.MONITOR_STREAM_DEFAULT_INTERVAL_MS,

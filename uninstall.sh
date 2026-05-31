@@ -65,6 +65,7 @@ rm -f "/usr/local/bin/${SELLER_NAME}-health.sh"
 rm -f "/usr/local/bin/${SELLER_NAME}-clear-logs.sh"
 rm -f "/usr/local/bin/${SELLER_NAME}-proxy-health.sh"
 rm -f "/usr/local/bin/${SELLER_NAME}-set-proxy-env.sh"
+rm -f "/usr/local/bin/${SELLER_NAME}-backup-profile.sh"
 
 echo "[4/6] Removing crontab entries..."
 CRON_TMP="/tmp/${SELLER_NAME}_uninstall_cron"
@@ -72,6 +73,7 @@ crontab -l -u root 2>/dev/null \
   | grep -v "${SELLER_NAME}-health" \
   | grep -v "${SELLER_NAME}-clear-logs" \
   | grep -v "${SELLER_NAME}-proxy-health" \
+  | grep -v "${SELLER_NAME}-backup-profile" \
   | grep -v "# ── ${SELLER_NAME}" \
   > "$CRON_TMP" || true
 crontab -u root "$CRON_TMP"

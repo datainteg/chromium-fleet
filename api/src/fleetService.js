@@ -43,6 +43,15 @@ async function readTextIfExists(filePath) {
   }
 }
 
+async function isPortInUse(port) {
+  try {
+    const result = await runCommand("ss", ["-tuln"], { allowFailure: true, timeoutMs: 5_000 });
+    return result.stdout.split("\n").some(line => line.includes(`:${port} `) || line.includes(`:${port}\n`) || line.endsWith(`:${port}`));
+  } catch {
+    return false;
+  }
+}
+
 function parseHostPort(proxyLine) {
   const [host, port] = proxyLine.split(":");
   if (!host || !port) {
@@ -166,17 +175,8 @@ async function getSellerSummary(seller) {
 
 async function listSellers() {
   const sellerNames = await getInstalledSellerNames();
-  const sellers = [];
-
-  for (const sellerName of sellerNames) {
-    try {
-      sellers.push(await getSellerSummary(sellerName));
-    } catch {
-      // Skip broken seller entries but continue returning others.
-    }
-  }
-
-  return sellers;
+  const results = await Promise.allSettled(sellerNames.map(name => getSellerSummary(name)));
+  return results.filter(r => r.status === "fulfilled").map(r => r.value);
 }
 
 function normalizeString(value) {
@@ -260,6 +260,12 @@ async function createSeller(payload) {
   }
 
   const input = validateInstallPayload(payload);
+
+  if (input.port && await isPortInUse(input.port)) {
+    const error = new Error(`Port ${input.port} is already in use on this host`);
+    error.statusCode = 409;
+    throw error;
+  }
 
   const args = [
     INSTALL_SCRIPT,
@@ -538,6 +544,78 @@ async function removeProxy(seller, indexParam) {
   };
 }
 
+async function getSellerLogs(seller, lines = 100) {
+  if (!isValidSellerName(seller)) {
+    throw Object.assign(new Error("Invalid seller name"), { statusCode: 400 });
+  }
+  const n = Math.min(Math.max(1, Number.parseInt(String(lines), 10) || 100), 1000);
+  const sellerPaths = buildSellerPaths(seller);
+  const composeText = await readTextIfExists(sellerPaths.composeFile);
+  if (!composeText) {
+    throw Object.assign(new Error("Seller not found"), { statusCode: 404 });
+  }
+  const result = await runCommand(
+    "docker",
+    ["logs", "--tail", String(n), "--timestamps", sellerPaths.containerName],
+    { allowFailure: true, timeoutMs: 15_000 }
+  );
+  return {
+    seller,
+    containerName: sellerPaths.containerName,
+    lines: n,
+    logs: (result.stderr || result.stdout || "").trim()
+  };
+}
+
+async function testSellerProxies(seller) {
+  if (!isValidSellerName(seller)) {
+    throw Object.assign(new Error("Invalid seller name"), { statusCode: 400 });
+  }
+  const sellerPaths = buildSellerPaths(seller);
+  const composeText = await readTextIfExists(sellerPaths.composeFile);
+  if (!composeText) {
+    throw Object.assign(new Error("Seller not found"), { statusCode: 404 });
+  }
+
+  const proxyConfText = (await readTextIfExists(sellerPaths.proxyConfFile)) || "";
+  const rawLines = proxyConfText.split("\n").map(l => l.trim()).filter(Boolean);
+
+  if (rawLines.length === 0) {
+    return { seller, count: 0, proxies: [] };
+  }
+
+  const activeProxyText = ((await readTextIfExists(sellerPaths.activeProxyFile)) || "").trim();
+
+  const proxies = await Promise.all(
+    rawLines.map(async (line, idx) => {
+      const [host, port, user, pass] = line.split(":");
+      const startMs = Date.now();
+      try {
+        const result = await runCommand(
+          "curl",
+          ["-fsSL", "--max-time", "5", "--proxy", `http://${user}:${pass}@${host}:${port}`, "https://api.ipify.org"],
+          { allowFailure: true, timeoutMs: 8_000 }
+        );
+        const alive = result.code === 0;
+        return {
+          index: idx,
+          host,
+          port,
+          user,
+          alive,
+          latencyMs: alive ? Date.now() - startMs : null,
+          externalIp: alive ? result.stdout.trim() : null,
+          active: Boolean(activeProxyText && activeProxyText.startsWith(`${host}:${port}:`))
+        };
+      } catch {
+        return { index: idx, host, port, user, alive: false, latencyMs: null, externalIp: null, active: false };
+      }
+    })
+  );
+
+  return { seller, count: proxies.length, proxies };
+}
+
 module.exports = {
   listSellers,
   getSellerSummary,
@@ -549,5 +627,7 @@ module.exports = {
   listProxies,
   addProxy,
   removeProxy,
+  getSellerLogs,
+  testSellerProxies,
   SELLER_ACTIONS
 };
