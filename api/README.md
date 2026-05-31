@@ -1,34 +1,39 @@
-# chromium-fleet API
+# Chromium Fleet API
 
-REST API control plane for `chromium-fleet`, designed for frontend integration.
+REST control plane for `chromium-fleet`, built for frontend integration and operations dashboards.
 
-## 1) Install
+<p>
+  <img alt="Runtime" src="https://img.shields.io/badge/runtime-Node%2018%2B-16a34a?style=flat-square" />
+  <img alt="Auth" src="https://img.shields.io/badge/auth-JWT%20%2B%20Refresh-0284c7?style=flat-square" />
+  <img alt="API" src="https://img.shields.io/badge/type-REST-f97316?style=flat-square" />
+</p>
 
+## Install
 ```bash
 cd api
 npm install
 cp .env.example .env
 ```
 
-Edit `.env` and set at least:
+Set at least:
+- `AUTH_USERNAME`, `AUTH_PASSWORD`
+- `JWT_SECRET`, `REFRESH_TOKEN_SECRET`
+- `CORS_ORIGINS` for your frontend
 
-- `AUTH_USERNAME`, `AUTH_PASSWORD`, `JWT_SECRET`, `REFRESH_TOKEN_SECRET`
-- `CORS_ORIGINS` to your frontend URL(s)
-
-## 2) Run
-
+## Run
 ```bash
 cd api
 npm start
 ```
 
-Default server: `http://0.0.0.0:8787`
+Default: `http://0.0.0.0:8787`
 
-## 3) Auth
-
-Default mode is username/password login + JWT bearer token.
-
-1. `POST /api/v1/auth/login` with:
+## Auth Flow (Recommended)
+1. Login with username/password:
+```http
+POST /api/v1/auth/login
+Content-Type: application/json
+```
 
 ```json
 {
@@ -37,94 +42,63 @@ Default mode is username/password login + JWT bearer token.
 }
 ```
 
-2. Use returned access token:
-
+2. Use access token:
 ```http
 Authorization: Bearer <accessToken>
 ```
 
-3. When access token expires, refresh it:
-
-```json
+3. Refresh when access token expires:
+```http
 POST /api/v1/auth/refresh
-{
-  "refreshToken": "<refreshToken>"
-}
+Content-Type: application/json
 ```
-
-4. Revoke refresh token on logout:
 
 ```json
-POST /api/v1/auth/logout
 {
   "refreshToken": "<refreshToken>"
 }
 ```
 
-Optional legacy mode:
+4. Logout/revoke:
+```http
+POST /api/v1/auth/logout
+Content-Type: application/json
+```
 
-- Set `ALLOW_API_KEY_AUTH=true`
-- Send `x-api-key: <API_KEY>`
+```json
+{
+  "refreshToken": "<refreshToken>"
+}
+```
+
+## Optional Legacy Auth
+- Enable `ALLOW_API_KEY_AUTH=true`
+- Pass `x-api-key: <API_KEY>`
 
 `/healthz` is public. `/api/*` requires auth unless `DISABLE_AUTH=true`.
 
-## 4) Endpoints
+## Core Endpoints
+- `GET /healthz`
+- `GET /api/v1/meta`
+- `POST /api/v1/auth/login`
+- `POST /api/v1/auth/refresh`
+- `POST /api/v1/auth/logout`
+- `GET /api/v1/monitor/overview`
+- `GET /api/v1/monitor/vm`
+- `GET /api/v1/monitor/fleet`
+- `GET /api/v1/monitor/cluster`
+- `GET /api/v1/sellers`
+- `GET /api/v1/sellers/:seller`
+- `POST /api/v1/sellers`
+- `POST /api/v1/sellers/:seller/actions/:action`
+- `DELETE /api/v1/sellers/:seller`
 
-### `GET /healthz`
-
-Health check.
-
-### `GET /api/v1/meta`
-
-Server capabilities and supported actions.
-
-### `POST /api/v1/auth/login`
-
-Login with username/password and receive access + refresh tokens.
-
-### `POST /api/v1/auth/refresh`
-
-Rotate refresh token and issue a fresh access + refresh token pair.
-
-### `POST /api/v1/auth/logout`
-
-Revoke refresh token (logout).
-
-### `GET /api/v1/monitor/overview`
-
-Combined VM usage + fleet/cluster health snapshot.
-
-### `GET /api/v1/monitor/vm`
-
-VM/system usage metrics (CPU, memory, swap, disk root, load average, uptime).
-
-### `GET /api/v1/monitor/fleet`
-
-Fleet status and usage summary across all sellers.
-
-### `GET /api/v1/monitor/cluster`
-
-Alias of fleet monitoring for cluster-style dashboards.
-
-### `GET /api/v1/sellers`
-
-List installed sellers and current state.
-
-### `GET /api/v1/sellers/:seller`
-
-Get a single seller summary.
-
-### `POST /api/v1/sellers`
-
-Create a seller (calls `install.sh`).
-
-Payload:
-
+## Example Seller Create Payload
 ```json
 {
-  "seller": "seller1",
+  "seller": "qa-team-1",
   "pass": "StrongPass!",
-  "subdomain": "seller1.example.com",
+  "subdomain": "chrome1.example.com",
   "port": 3000,
   "user": "admin",
   "tz": "Asia/Kolkata",
@@ -139,26 +113,10 @@ Payload:
 }
 ```
 
-### `DELETE /api/v1/sellers/:seller`
-
-Remove a seller (calls `uninstall.sh --yes`).
-
-### `POST /api/v1/sellers/:seller/actions/:action`
-
-Run one seller lifecycle action.
-
-Supported action values:
-
-- `start`
-- `stop`
-- `restart`
-- `recreate`
-- `update`
-- `status`
-- `proxy-status`
-- `proxy-rotate`
-
-## 5) Notes
-
-- API process should run as a user with permission to run Docker and manage seller scripts (typically root on VM).
+## Notes
+- Run API with permission to execute Docker and fleet scripts (typically root on VM).
 - Command output is returned in API responses as `result.stdout` / `result.stderr`.
+
+## Support
+- Author: `Datainteg`
+- Support Email: `support@datainteg.io`

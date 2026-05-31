@@ -1,0 +1,32 @@
+<svg width="640" height="220" viewBox="0 0 640 220" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="fleetGrad" x1="40" y1="30" x2="600" y2="190" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0EA5E9"/>
+      <stop offset="0.5" stop-color="#14B8A6"/>
+      <stop offset="1" stop-color="#22C55E"/>
+    </linearGradient>
+  </defs>
+  <rect x="10" y="10" width="620" height="200" rx="26" fill="#0B1220"/>
+  <rect x="16" y="16" width="608" height="188" rx="22" stroke="url(#fleetGrad)" stroke-width="2"/>
+
+  <g transform="translate(36 54)">
+    <rect x="0" y="0" width="84" height="84" rx="16" fill="url(#fleetGrad)"/>
+    <rect x="16" y="16" width="52" height="52" rx="10" fill="#0B1220"/>
+    <path d="M30 44H54" stroke="#22C55E" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="30" cy="44" r="4" fill="#0EA5E9"/>
+    <circle cx="54" cy="44" r="4" fill="#14B8A6"/>
+  </g>
+
+  <text x="140" y="92" fill="#E2E8F0" font-size="34" font-family="Segoe UI, Arial, sans-serif" font-weight="700">
+    CHROMIUM FLEET
+  </text>
+  <text x="140" y="128" fill="#93C5FD" font-size="16" font-family="Segoe UI, Arial, sans-serif" font-weight="600">
+    OPEN SOURCE BROWSER INFRASTRUCTURE
+  </text>
+  <text x="140" y="155" fill="#94A3B8" font-size="14" font-family="Segoe UI, Arial, sans-serif">
+    Datainteg
+  </text>
+  <text x="520" y="190" fill="#64748B" font-size="12" font-family="Segoe UI, Arial, sans-serif">
+    support@datainteg.io
+  </text>
+</svg>
