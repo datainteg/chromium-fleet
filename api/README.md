@@ -73,10 +73,18 @@ Copy `.env.example` to `.env` and set at minimum:
 | `REFRESH_TOKEN_SECRET` | Yes | `openssl rand -base64 48` (different from JWT_SECRET) |
 | `CORS_ORIGINS` | Yes | Your frontend domain(s), not localhost |
 | `HOST` | Yes | Keep `127.0.0.1` — never `0.0.0.0` in production |
-| `ALLOW_INSTALL` | Yes | Set `false` once sellers are provisioned |
-| `ALLOW_UNINSTALL` | Yes | Set `false` once sellers are provisioned |
+| `ALLOW_INSTALL` | — | **Default `false`**. Set `true` only for intentional API provisioning in host/systemd mode. |
+| `ALLOW_UNINSTALL` | — | **Default `false`**. Set `true` only for intentional API removal in host/systemd mode. |
+| `ALLOW_DESTRUCTIVE_ACTIONS` | — | **Default `false`**. Set `true` to enable profile restore, extension delete, fleet-wide stop/recreate/update. |
 | `SESSIONS_FILE` | No | Default `/opt/chromium-fleet-sessions.json` |
 | `WEBHOOK_URL` | No | Discord/Slack webhook for crash alerts |
+
+**403 behavior:**
+- `POST /api/v1/sellers` → `403` when `ALLOW_INSTALL=false`; `501` in Docker API mode (regardless of flag)
+- `DELETE /api/v1/sellers/:seller` → `403` when `ALLOW_UNINSTALL=false`; `501` in Docker API mode
+- `DELETE /api/v1/sellers/:seller/extensions/:name` → `403` when `ALLOW_DESTRUCTIVE_ACTIONS=false`
+- `POST /api/v1/sellers/:seller/restore/:filename` → `403` when `ALLOW_DESTRUCTIVE_ACTIONS=false`
+- `POST /api/v1/sellers/actions/stop|recreate|update` (fleet-wide) → `403` when `ALLOW_DESTRUCTIVE_ACTIONS=false`
 
 Rate limiting (all configurable via `.env`):
 

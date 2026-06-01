@@ -802,9 +802,19 @@ app.get(
 );
 
 // ── Fleet bulk action (all sellers) ───────────────────────────────────────
+// stop/recreate/update affect all sellers at once — require explicit opt-in
+const DESTRUCTIVE_BULK_ACTIONS = new Set(["stop", "recreate", "update"]);
+
 app.post(
   "/api/v1/sellers/actions/:action",
   asyncHandler(async (req, res) => {
+    if (DESTRUCTIVE_BULK_ACTIONS.has(req.params.action) && !config.allowDestructiveActions) {
+      res.status(403).json({
+        error: "Destructive actions are disabled by server configuration",
+        requestId: req.requestId
+      });
+      return;
+    }
     const result = await fleetBulkAction(req.params.action);
     res.json(result);
   })
@@ -831,6 +841,13 @@ app.get(
 app.delete(
   "/api/v1/sellers/:seller/extensions/:name",
   asyncHandler(async (req, res) => {
+    if (!config.allowDestructiveActions) {
+      res.status(403).json({
+        error: "Destructive actions are disabled by server configuration",
+        requestId: req.requestId
+      });
+      return;
+    }
     const result = await deleteSellerExtension(req.params.seller, req.params.name);
     res.json(result);
   })
@@ -848,6 +865,13 @@ app.get(
 app.post(
   "/api/v1/sellers/:seller/restore/:filename",
   asyncHandler(async (req, res) => {
+    if (!config.allowDestructiveActions) {
+      res.status(403).json({
+        error: "Destructive actions are disabled by server configuration",
+        requestId: req.requestId
+      });
+      return;
+    }
     const result = await restoreSellerBackup(req.params.seller, req.params.filename);
     res.json(result);
   })

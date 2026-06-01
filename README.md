@@ -161,14 +161,24 @@ sudo bash api/install-service.sh --docker
 
 Logs: `docker compose -f docker-compose.fleet.yml logs -f api`
 
-### After provisioning, lock down install/remove
+### Install and Remove are disabled by default
 
-Once all browser instances are set up, set in `api/.env`:
+`ALLOW_INSTALL` and `ALLOW_UNINSTALL` default to `false`. API-based provisioning is opt-in.
+
+**Recommended workflow:**
+- Provision sellers by running `install.sh` directly on the host VM.
+- Remove sellers by running `uninstall.sh` directly on the host VM.
+- In Docker API mode, `POST /api/v1/sellers` returns `501` regardless of the flag (`install.sh` cannot run inside a container).
+- Set `ALLOW_INSTALL=true` only in trusted host/systemd deployments where API-based provisioning is intentionally needed.
+
+For production, keep defaults in `api/.env`:
 ```env
 ALLOW_INSTALL=false
 ALLOW_UNINSTALL=false
+ALLOW_DESTRUCTIVE_ACTIONS=false
 ```
-This blocks `POST /api/v1/sellers` and `DELETE /api/v1/sellers/:seller` to prevent accidental or unauthorized changes. Lifecycle actions (start/stop/restart) continue working normally.
+
+Lifecycle actions (`start`, `stop`, `restart`, `status`, `proxy-rotate`) are never affected by these flags.
 
 ## Security Warning — Docker Socket
 
