@@ -54,17 +54,24 @@ The API is designed to be accessed only through the Nginx reverse proxy at `/api
 ufw allow 80/tcp
 ufw allow 443/tcp
 
+# Allow SSH only from trusted IPs — never from 0.0.0.0/0
+ufw allow from YOUR_TRUSTED_IP to any port 22
+
 # Allow Chromium ports only from trusted IP ranges (adjust as needed)
 # ufw allow from YOUR_OFFICE_IP to any port 3000:3099 proto tcp
 
 # Block direct API port access from internet
 ufw deny 8787/tcp
 
+# Default deny incoming
+ufw default deny incoming
+ufw default allow outgoing
+
 # Enable firewall
 ufw enable
 ```
 
-**GCP / AWS equivalent:** Set VPC firewall rules to block port 8787 from `0.0.0.0/0`. Only allow it from localhost or your internal subnet.
+**GCP / AWS equivalent:** Set VPC firewall rules to block port 8787 from `0.0.0.0/0`. Restrict SSH (port 22) to your team's IP range. Only allow 80/443 from the internet.
 
 ---
 
@@ -106,6 +113,7 @@ Proxy credentials (host, port, username, password) are stored in:
 - Ensure VM disk encryption is enabled if proxies contain sensitive credentials.
 - Do not include `/opt/<seller>-browser/` in public VM snapshots or backups.
 - Rotate proxy credentials periodically and update via `proxy-rotate` action.
+- **Never paste real proxy credentials in GitHub issues, pull requests, or public forums.** Use redacted placeholders like `user:REDACTED@host:port`.
 
 **Note:** `docker inspect <container>` will still show HTTP_PROXY in the container's environment variables (Docker has no mechanism to hide `env_file` values from inspect without Docker Secrets + Swarm mode). This is a known limitation. Restrict Docker group membership accordingly.
 
@@ -131,11 +139,12 @@ Review these settings before production:
 
 | Setting | Default | Production recommendation |
 |---|---|---|
-| `DISABLE_AUTH` | `false` | Keep `false` |
-| `ALLOW_INSTALL` | `true` | Set `false` after provisioning |
-| `ALLOW_UNINSTALL` | `true` | Set `false` after provisioning |
-| `ALLOW_ACTIONS` | `true` | Keep `true` (lifecycle actions) |
-| `ALLOW_API_KEY_AUTH` | `false` | Keep `false` unless legacy clients need it |
+| `DISABLE_AUTH` | `false` | Keep `false` — never disable auth in production |
+| `ALLOW_INSTALL` | `false` | Keep `false` — provision via `install.sh` on host |
+| `ALLOW_UNINSTALL` | `false` | Keep `false` — remove via `uninstall.sh` on host |
+| `ALLOW_ACTIONS` | `true` | Keep `true` — required for lifecycle operations |
+| `ALLOW_DESTRUCTIVE_ACTIONS` | `false` | Keep `false` — gates profile restore, extension delete, fleet-wide stop/recreate/update |
+| `ALLOW_API_KEY_AUTH` | `false` | Keep `false` unless legacy clients explicitly require it |
 | `JWT_EXPIRES_IN` | `15m` | Reduce to `5m` for high-security environments |
 | `REFRESH_TOKEN_EXPIRES_IN` | `7d` | Acceptable; reduce for high-security environments |
 

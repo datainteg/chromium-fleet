@@ -3,6 +3,7 @@ api/node_modules/
 node_modules/
 
 # Environment and secrets — never commit
+.env
 api/.env
 proxy.env
 *.env

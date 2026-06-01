@@ -4,7 +4,35 @@ Use this checklist when deploying a new VM, upgrading an existing installation, 
 
 ---
 
-## Pre-Install Checks
+## A. Pre-Push Checks (run before every GitHub push)
+
+```bash
+# No vendor/copyright-sensitive terms
+grep -R "indiamart" . --include="*.sh" --include="*.js" --include="*.md" --include="*.yml" || echo "CLEAN"
+
+# No secrets, credentials, or runtime files tracked
+git ls-files | grep -E "\.env$|proxy\.env|\.log$|profile/|backups/" || echo "NONE"
+
+# Shell script syntax
+bash -n install.sh setup.sh nginx.sh proxy.sh uninstall.sh health-all.sh update-all.sh list-sellers.sh api/install-service.sh
+
+# Node.js syntax
+node -c api/src/server.js
+node -c api/src/config.js
+node -c api/src/exec.js
+node -c api/src/fleetService.js
+node -c api/src/monitoringService.js
+node -c api/src/validators.js
+node -c api/src/sessions.js
+node -c api/src/events.js
+node -c api/src/webhook.js
+```
+
+All commands must exit 0 with no output (shell) or `OK` (node) before pushing.
+
+---
+
+## B. Pre-Install Checks
 
 - [ ] VM is running Debian 12 or Ubuntu 22.04/24.04 (64-bit).
 - [ ] Root or sudo access confirmed.
@@ -18,7 +46,9 @@ Use this checklist when deploying a new VM, upgrading an existing installation, 
 
 ---
 
-## 1. No-Proxy Install Test
+## C. Fresh VM Install Tests
+
+### C1. No-Proxy Install Test
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/datainteg/chromium-fleet/main/install.sh \
@@ -40,7 +70,7 @@ Verify:
 
 ---
 
-## 2. One-Proxy Install Test
+### C2. One-Proxy Install Test
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/datainteg/chromium-fleet/main/install.sh \
@@ -63,7 +93,7 @@ Verify:
 
 ---
 
-## 3. Multi-Proxy Failover Test
+### C3. Multi-Proxy Failover Test
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/datainteg/chromium-fleet/main/install.sh \
@@ -94,7 +124,7 @@ Verify:
 
 ---
 
-## 4. API Docker Deployment Test
+## D. API Docker Tests
 
 ```bash
 # On the VM, from the repo root:
@@ -115,7 +145,7 @@ Verify:
 
 ---
 
-## 5. Nginx SSL Test
+## E. Nginx Tests
 
 Verify:
 - [ ] DNS A record for subdomain points to VM IP.
@@ -128,7 +158,7 @@ Verify:
 
 ---
 
-## 6. VM Stop/Start Test (12 AM–6 AM IST Window)
+## F. VM Reboot Tests
 
 Assumption: VM is scheduled to stop at 18:30 UTC and start at 00:30 UTC daily.
 
@@ -143,7 +173,7 @@ Verify:
 
 ---
 
-## 7. Browser Session Persistence Test
+### F1. Browser Session Persistence Test
 
 After VM stop/start:
 - [ ] Open browser subdomain in a browser tab.
@@ -154,7 +184,9 @@ After VM stop/start:
 
 ---
 
-## 8. Proxy Rotation Test
+## G. Production Checks
+
+### G1. Proxy Tests
 
 Via API (requires JWT token):
 ```bash
@@ -179,7 +211,7 @@ curl -s https://chrome1.yourdomain.com/api/v1/sellers/test-multi-proxy/proxies/t
 
 ---
 
-## 9. Frontend Endpoint Smoke Test
+### G2. Frontend Endpoint Smoke Test
 
 Using the API with a valid JWT token, verify these endpoints return non-error responses:
 
@@ -205,7 +237,7 @@ Verify:
 
 ---
 
-## 10. Security Verification
+### G3. Security Verification
 
 - [ ] `grep -r "indiamart" . --include="*.sh" --include="*.md" --include="*.js"` → no results.
 - [ ] `grep HTTP_PROXY /opt/<seller>-browser/docker-compose.yml` → no results (credentials not in YAML).
@@ -215,3 +247,8 @@ Verify:
 - [ ] Port 8787 not accessible from internet (test from external host).
 - [ ] `api/.env` not committed: `git status api/.env` → shows it as ignored.
 - [ ] `curl -s http://YOURVM_IP:8787/healthz` → connection refused or timeout from public internet.
+- [ ] `ALLOW_INSTALL=false` and `ALLOW_UNINSTALL=false` confirmed in `api/.env`.
+- [ ] `ALLOW_DESTRUCTIVE_ACTIONS=false` confirmed in `api/.env`.
+- [ ] SSH restricted to trusted IPs (not `0.0.0.0/0`) in firewall/cloud VPC rules.
+- [ ] Strong `JWT_SECRET` and `REFRESH_TOKEN_SECRET` set (not `.env.example` defaults).
+- [ ] `CORS_ORIGINS` set to actual production frontend domain (not localhost).

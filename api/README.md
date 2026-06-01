@@ -350,7 +350,8 @@ Mounting `/var/run/docker.sock` grants the API container host-level Docker daemo
 **Production hardening checklist:**
 - Never expose port `8787` publicly — serve API only through Nginx (`/api` proxy).
 - API is protected by both Nginx basic auth AND JWT (`Authorization: Bearer`).
-- Set `ALLOW_INSTALL=false` + `ALLOW_UNINSTALL=false` once all sellers are provisioned.
+- `ALLOW_INSTALL=false` and `ALLOW_UNINSTALL=false` are the **safe defaults** — do not change unless intentionally enabling API-based provisioning.
+- `ALLOW_DESTRUCTIVE_ACTIONS=false` — keep default; gates profile restore, extension delete, and fleet-wide stop/recreate/update.
 - Rate limiting is on by default — tune `RATE_LIMIT_API_MAX` and `RATE_LIMIT_AUTH_MAX`.
 - SSE streams are quota-limited per connection — tune `SSE_MAX_BYTES_PER_HOUR`.
 - In Docker mode (`FLEET_ROOT` is set), `POST /api/v1/sellers` and `DELETE /api/v1/sellers/:seller` return `501` — run `install.sh` / `uninstall.sh` on the host VM instead.
@@ -368,7 +369,9 @@ When the API runs in Docker (`FLEET_ROOT=/fleet` is set via `docker-compose.flee
 | All proxy endpoints | ✓ Work normally |
 | All SSE streams | ✓ Work normally |
 
-Additionally, if `ALLOW_INSTALL=false` or `ALLOW_UNINSTALL=false` is set in `.env`, the corresponding endpoint returns `403 Forbidden` regardless of Docker mode.
+Additionally:
+- If `ALLOW_INSTALL=false` or `ALLOW_UNINSTALL=false` (the defaults), the corresponding endpoint returns `403 Forbidden` regardless of Docker mode.
+- If `ALLOW_DESTRUCTIVE_ACTIONS=false` (the default), these return `403`: `DELETE /api/v1/sellers/:seller/extensions/:name`, `POST /api/v1/sellers/:seller/restore/:filename`, and `POST /api/v1/sellers/actions/stop|recreate|update`.
 
 ## Notes
 
