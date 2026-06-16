@@ -229,7 +229,10 @@ Each installed seller automatically creates cron jobs (visible via `crontab -l -
 To edit cron: `crontab -e -u root`
 
 ## Requirements
-- Debian 12 or Ubuntu 22.04/24.04 (64-bit)
+- 64-bit Linux with one of:
+  - **Debian/Ubuntu** (apt) — Debian 12, Ubuntu 22.04/24.04
+  - **RHEL family** (dnf/yum) — RHEL / CentOS / Rocky / AlmaLinux 8+, Fedora, Amazon Linux 2 / 2023
+  - The installer auto-detects the package manager. On RHEL-family hosts Docker is installed via Docker's official `get.docker.com` script (`docker.io` is not in those repos).
 - Root access
 - Open firewall ports: `80`, `443`, and your Chromium ports
 - DNS A record pointing subdomain to VM IP
