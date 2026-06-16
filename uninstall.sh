@@ -82,8 +82,10 @@ crontab -u root "$CRON_TMP"
 rm -f "$CRON_TMP"
 
 echo "[5/6] Removing Nginx config and logs..."
+# Debian layout (sites-available/enabled) and RHEL/Fedora layout (conf.d/)
 rm -f "/etc/nginx/sites-enabled/$CONF_NAME"
 rm -f "/etc/nginx/sites-available/$CONF_NAME"
+rm -f "/etc/nginx/conf.d/${CONF_NAME}.conf"
 rm -f "/etc/nginx/htpasswd/${SELLER_NAME}"
 rm -f "/var/log/nginx/${SELLER_NAME}-chrome-access.log"
 rm -f "/var/log/nginx/${SELLER_NAME}-chrome-error.log"

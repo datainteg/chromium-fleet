@@ -98,38 +98,131 @@ echo " Port    : $CHROME_PORT"
 echo "======================================"
 echo ""
 
+# ─── OS / package-manager detection ──────────────────────────
+# Supports Debian/Ubuntu (apt) and RHEL/CentOS/Rocky/AlmaLinux/
+# Fedora/Amazon Linux (dnf or yum). Every package operation goes
+# through the pkg_* helpers so the rest of the script is generic.
+OS_ID=""
+if [ -r /etc/os-release ]; then
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  OS_ID="${ID:-}"
+fi
+
+if command -v apt-get &>/dev/null; then
+  PKG="apt";  CRON_SVC="cron";  PKG_CLEAN_CMD="apt-get clean"
+elif command -v dnf &>/dev/null; then
+  PKG="dnf";  CRON_SVC="crond"; PKG_CLEAN_CMD="dnf clean all"
+elif command -v yum &>/dev/null; then
+  PKG="yum";  CRON_SVC="crond"; PKG_CLEAN_CMD="yum clean all"
+else
+  echo "ERROR: No supported package manager found (need apt-get, dnf, or yum)."
+  exit 1
+fi
+echo "  Package manager: $PKG   OS: ${OS_ID:-unknown}"
+
+pkg_update() {
+  case "$PKG" in
+    apt) apt-get update -y -qq ;;
+    dnf) dnf makecache -q -y 2>/dev/null || true ;;
+    yum) yum makecache -q -y 2>/dev/null || true ;;
+  esac
+}
+
+pkg_upgrade() {
+  case "$PKG" in
+    apt) DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq ;;
+    dnf) dnf upgrade -y -q || true ;;
+    yum) yum upgrade -y -q || true ;;
+  esac
+}
+
+pkg_install() {
+  case "$PKG" in
+    apt) DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@" ;;
+    dnf) dnf install -y -q "$@" ;;
+    yum) yum install -y -q "$@" ;;
+  esac
+}
+
+# ensure_cmd <command> <package> — install pkg only when command is absent
+# (avoids the curl/curl-minimal conflict on RHEL 9 / Amazon Linux 2023).
+ensure_cmd() { command -v "$1" &>/dev/null || pkg_install "$2"; }
+
+# EPEL provides nginx (older RHEL), certbot and redsocks on RHEL-family.
+# No-op on Debian/apt, Fedora, and Amazon Linux 2023.
+enable_epel() {
+  [ "$PKG" = "apt" ] && return 0
+  case "$OS_ID" in
+    fedora) return 0 ;;
+    amzn)   amazon-linux-extras install -y epel 2>/dev/null || true; return 0 ;;
+  esac
+  pkg_install epel-release 2>/dev/null || \
+    pkg_install "https://dl.fedoraproject.org/pub/epel/epel-release-latest-$(rpm -E %rhel 2>/dev/null).noarch.rpm" 2>/dev/null || true
+}
+
+install_nginx() {
+  command -v nginx &>/dev/null && return 0
+  # Amazon Linux 2 ships nginx via amazon-linux-extras, not the base repo.
+  if [ "$OS_ID" = "amzn" ] && amazon-linux-extras install -y nginx1 2>/dev/null; then
+    return 0
+  fi
+  pkg_install nginx
+}
+
+install_docker() {
+  if command -v docker &>/dev/null; then
+    echo "  Docker already installed — skipping engine install."
+  elif [ "$PKG" = "apt" ]; then
+    pkg_install docker.io docker-compose-plugin
+  else
+    # RHEL/CentOS/Rocky/Alma/Fedora: docker.io does not exist in these repos.
+    # Docker's official script adds the docker-ce repo and installs the engine
+    # plus the compose plugin for all of them in one shot.
+    echo "  Installing Docker via get.docker.com (RHEL-family)..."
+    curl -fsSL https://get.docker.com | sh
+  fi
+  # Scripts use `docker compose` (v2 plugin) — make sure it is present.
+  if ! docker compose version &>/dev/null; then
+    pkg_install docker-compose-plugin 2>/dev/null || true
+  fi
+}
+
 # ─── [1] System update ───────────────────────────────────────
 echo "[1/9] Updating system packages..."
-apt-get update -y -qq
-DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq
+pkg_update
+pkg_upgrade
 
 # ─── [2] Install dependencies ────────────────────────────────
 echo "[2/9] Installing packages..."
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-  docker.io \
-  docker-compose-plugin \
-  nginx \
-  apache2-utils \
-  curl \
-  wget \
-  nano \
-  htop \
-  unzip \
-  cron \
-  ca-certificates \
-  gnupg \
-  lsb-release \
-  certbot \
-  python3-certbot-nginx \
-  redsocks \
-  iptables \
-  net-tools
+install_docker
+enable_epel
+install_nginx
+
+case "$PKG" in
+  apt) REQ_PKGS=(apache2-utils unzip cron    ca-certificates iptables)
+       OPT_PKGS=(wget nano htop gnupg  lsb-release net-tools redsocks) ;;
+  *)   REQ_PKGS=(httpd-tools  unzip cronie ca-certificates iptables)
+       OPT_PKGS=(wget nano htop gnupg2 net-tools redsocks) ;;
+esac
+
+pkg_install "${REQ_PKGS[@]}"
+ensure_cmd curl curl
+# Optional tools — install one at a time so a single missing package
+# (e.g. redsocks not in this distro's repo) can't abort the whole run.
+for p in "${OPT_PKGS[@]}"; do
+  pkg_install "$p" 2>/dev/null || echo "  (skipped optional package: $p)"
+done
+# certbot for Let's Encrypt SSL — nginx.sh retries this too; SSL is optional.
+enable_epel
+pkg_install certbot python3-certbot-nginx 2>/dev/null || \
+  echo "  (certbot not available now — SSL setup is optional, see nginx.sh)"
 
 # ─── [3] Enable services ─────────────────────────────────────
 echo "[3/9] Enabling services..."
 systemctl enable --now docker
 systemctl enable --now nginx
-systemctl enable --now cron
+systemctl enable --now "$CRON_SVC"
 
 # ─── [4] Swap ────────────────────────────────────────────────
 echo "[4/9] Configuring swap..."
@@ -451,7 +544,7 @@ for F in /var/log/nginx/${SELLER_NAME}-chrome-access.log \
   fi
 done
 
-apt-get clean >/dev/null 2>&1 || true
+${PKG_CLEAN_CMD} >/dev/null 2>&1 || true
 echo "\$TS | DONE  | Complete." >> "\$LOG"
 
 [ "\$(wc -l < "\$LOG" 2>/dev/null || echo 0)" -gt 200 ] && \
